@@ -14,6 +14,7 @@
     --amber-dark: #B87A1E;
     --line: #DDD6C7;
     --success: #2F7A52;
+    --danger: #B23B3B;
   }
   * { box-sizing: border-box; }
   body {
@@ -58,11 +59,12 @@
   }
   .chat {
     padding: 20px 20px 8px;
-    max-height: 480px;
+    max-height: 560px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
+    scroll-behavior: smooth;
   }
   .msg {
     max-width: 82%;
@@ -101,9 +103,9 @@
     align-items: center;
     position: relative;
     cursor: pointer;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, transform 0.1s;
   }
-  .flight-card:hover { border-color: var(--amber); }
+  .flight-card:hover { border-color: var(--amber); transform: translateY(-1px); }
   .flight-card::before {
     content: "";
     position: absolute;
@@ -129,7 +131,7 @@
     font-size: 15px;
     color: var(--amber-dark);
   }
-  .quick-form, .passenger-form {
+  .quick-form, .step-form {
     background: #F7F4EC;
     border: 1px dashed var(--line);
     border-radius: 10px;
@@ -140,19 +142,39 @@
     align-self: flex-start;
     width: 100%;
   }
-  .quick-form input, .passenger-form input {
+  .step-form .form-title {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 2px;
+  }
+  .quick-form input,
+  .step-form input,
+  .step-form select {
     padding: 8px 10px;
     border: 1px solid var(--line);
     border-radius: 6px;
     font-size: 13px;
     font-family: inherit;
     background: var(--card);
+    color: var(--ink);
   }
-  .quick-form input:focus, .passenger-form input:focus {
+  .quick-form input:focus,
+  .step-form input:focus,
+  .step-form select:focus {
     outline: none;
     border-color: var(--amber);
   }
   .full-row { grid-column: 1 / -1; }
+  .field-label {
+    grid-column: 1 / -1;
+    font-size: 10.5px;
+    color: var(--ink-soft);
+    margin: 2px 0 -4px;
+  }
   .submit-btn {
     grid-column: 1 / -1;
     background: var(--ink);
@@ -164,9 +186,117 @@
     font-weight: 600;
     cursor: pointer;
     margin-top: 2px;
+    transition: background 0.15s;
   }
   .submit-btn:hover { background: #253256; }
   .submit-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .field-error {
+    grid-column: 1 / -1;
+    color: var(--danger);
+    font-size: 11.5px;
+    margin-top: -4px;
+  }
+
+  /* --- Payment step --- */
+  .card-brands {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .card-brand {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink-soft);
+    transition: all 0.15s;
+  }
+  .card-brand.active {
+    border-color: var(--amber);
+    color: var(--ink);
+    background: #FDF3E2;
+  }
+  .card-visual {
+    grid-column: 1 / -1;
+    background: linear-gradient(135deg, var(--ink) 0%, #253256 100%);
+    color: var(--paper);
+    border-radius: 10px;
+    padding: 14px 16px;
+    font-family: "Courier New", monospace;
+    margin-bottom: 4px;
+    position: relative;
+    overflow: hidden;
+  }
+  .card-visual .chip {
+    width: 26px; height: 18px;
+    background: linear-gradient(135deg, var(--amber), var(--amber-dark));
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .card-visual .num {
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    min-height: 18px;
+  }
+  .card-visual .meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 10px;
+    color: #A9B4CC;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .card-visual .meta span.name-val, .card-visual .meta span.exp-val {
+    display: block;
+    color: var(--paper);
+    font-size: 12px;
+    margin-top: 2px;
+    text-transform: none;
+  }
+  .gpay-btn {
+    grid-column: 1 / -1;
+    background: var(--card);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    padding: 9px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .gpay-btn:hover { border-color: var(--amber); }
+  .or-divider {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--ink-soft);
+    margin: 2px 0;
+  }
+  .or-divider::before, .or-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+  .secure-note {
+    grid-column: 1 / -1;
+    font-size: 10px;
+    color: var(--ink-soft);
+    text-align: center;
+    margin-top: 2px;
+  }
 
   .pnr-card {
     align-self: flex-start;
@@ -292,6 +422,12 @@ function addUserMessage(text) {
   chat.scrollTop = chat.scrollHeight;
 }
 
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 let conversationHistory = [];  // full chat record with Claude (Anthropic format)
 
 // Safe fetch wrapper — never crashes even if the server returns HTML/an error page
@@ -329,7 +465,7 @@ async function sendFreeText() {
     loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-msg">${data.error}</span>`);
+      addBotMessage(`<span class="error-msg">${escapeHtml(data.error)}</span>`);
       return;
     }
 
@@ -342,7 +478,7 @@ async function sendFreeText() {
     }
   } catch (err) {
     loading.remove();
-    addBotMessage(`<span class="error-msg">Something went wrong: ${err.message}</span>`);
+    addBotMessage(`<span class="error-msg">Something went wrong: ${escapeHtml(err.message)}</span>`);
   }
 }
 
@@ -354,12 +490,12 @@ function renderFlightCards(offers) {
     card.className = 'flight-card';
     card.innerHTML = `
       <div class="flight-info">
-        <div class="airline">${o.airline}</div>
-        <div class="code">offer: ${o.offer_id.slice(0, 10)}...</div>
+        <div class="airline">${escapeHtml(o.airline)}</div>
+        <div class="code">offer: ${escapeHtml(o.offer_id.slice(0, 10))}...</div>
       </div>
-      <div class="flight-price">${o.price} ${o.currency}</div>
+      <div class="flight-price">${escapeHtml(o.price)} ${escapeHtml(o.currency)}</div>
     `;
-    card.onclick = () => selectOffer(o);
+    card.onclick = () => selectOffer(o, null, null);
     ticketWrap.appendChild(card);
   });
   chat.appendChild(ticketWrap);
@@ -389,7 +525,7 @@ async function runSearch() {
     loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-msg">Search failed: ${data.error}</span>`);
+      addBotMessage(`<span class="error-msg">Search failed: ${escapeHtml(data.error)}</span>`);
       return;
     }
     if (data.offers.length === 0) {
@@ -406,62 +542,270 @@ async function runSearch() {
       card.className = 'flight-card';
       card.innerHTML = `
         <div class="flight-info">
-          <div class="airline">${o.airline}</div>
-          <div class="code">${origin} → ${destination} · ${date}</div>
+          <div class="airline">${escapeHtml(o.airline)}</div>
+          <div class="code">${escapeHtml(origin)} → ${escapeHtml(destination)} · ${escapeHtml(date)}</div>
         </div>
-        <div class="flight-price">${o.price} ${o.currency}</div>
+        <div class="flight-price">${escapeHtml(o.price)} ${escapeHtml(o.currency)}</div>
       `;
-      card.onclick = () => selectOffer(o);
+      card.onclick = () => selectOffer(o, origin, destination, date);
       ticketWrap.appendChild(card);
     });
     chat.appendChild(ticketWrap);
     chat.scrollTop = chat.scrollHeight;
   } catch (err) {
     loading.remove();
-    addBotMessage(`<span class="error-msg">Something went wrong: ${err.message}</span>`);
+    addBotMessage(`<span class="error-msg">Something went wrong: ${escapeHtml(err.message)}</span>`);
   }
 }
 
+/* =========================================================================
+   Booking journey after an offer is picked:
+     1) selectOffer      -> quick account signup (calls real /api/signup)
+     2) showPassengerStep -> full passenger details (as required by /api/book)
+     3) showPaymentStep   -> mock card entry (visual only, for the demo) or
+                              a one-tap "Pay with G Pay" shortcut
+     4) confirmBooking     -> calls the real /api/book endpoint (unchanged)
+   ========================================================================= */
+
 function selectOffer(offer) {
   addUserMessage(`Selected ${offer.airline} — ${offer.price} ${offer.currency}`);
-  addBotMessage('Please fill in passenger details to confirm the booking:');
+  showSignupStep(offer);
+}
+
+function showSignupStep(offer) {
+  addBotMessage('Great choice! First, let\'s create a quick account for your booking.');
 
   const form = document.createElement('div');
-  form.className = 'passenger-form';
+  form.className = 'step-form';
   form.innerHTML = `
-    <input id="p_given" placeholder="First name">
-    <input id="p_family" placeholder="Last name">
-    <input id="p_email" placeholder="Email" class="full-row">
-    <input id="p_phone" placeholder="+92...">
-    <input id="p_dob" type="date" placeholder="Date of birth">
-    <button class="submit-btn full-row" onclick='confirmBooking(${JSON.stringify(offer.offer_id)}, this)'>Confirm &amp; pay (test)</button>
+    <div class="form-title">Create your account</div>
+    <input id="s_email" type="email" class="full-row" placeholder="Email address">
+    <input id="s_phone" placeholder="Phone (+92...)">
+    <input id="s_password" type="password" placeholder="Password">
+    <div class="field-error full-row" id="s_error" style="display:none;"></div>
+    <button class="submit-btn full-row" id="s_submit">Create account &amp; continue</button>
   `;
   chat.appendChild(form);
   chat.scrollTop = chat.scrollHeight;
+
+  form.querySelector('#s_submit').onclick = () => submitSignup(offer, form);
 }
 
-async function confirmBooking(offerId, btn) {
-  const passenger = {
-    given_name: document.getElementById('p_given').value,
-    family_name: document.getElementById('p_family').value,
-    email: document.getElementById('p_email').value,
-    phone_number: document.getElementById('p_phone').value,
-    born_on: document.getElementById('p_dob').value,
-  };
+async function submitSignup(offer, form) {
+  const email = form.querySelector('#s_email').value.trim();
+  const phone = form.querySelector('#s_phone').value.trim();
+  const password = form.querySelector('#s_password').value;
+  const errorBox = form.querySelector('#s_error');
+  errorBox.style.display = 'none';
+
+  if (!email || !phone || !password) {
+    errorBox.textContent = 'Please fill in email, phone, and password.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  const btn = form.querySelector('#s_submit');
   btn.disabled = true;
-  btn.textContent = 'Booking...';
+  btn.textContent = 'Creating account...';
+
+  try {
+    const data = await safeFetchJson('/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, phone_number: phone, password })
+    });
+
+    if (!data.success) {
+      errorBox.textContent = data.error || 'Could not create account.';
+      errorBox.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Create account & continue';
+      return;
+    }
+
+    form.remove();
+    addUserMessage(`Account: ${email}`);
+    addBotMessage('Account created. Now let\'s get your traveler details.');
+    showPassengerStep(offer, { email, phone });
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Create account & continue';
+  }
+}
+
+function showPassengerStep(offer, account) {
+  const form = document.createElement('div');
+  form.className = 'step-form';
+  form.innerHTML = `
+    <div class="form-title">Traveler details</div>
+    <select id="p_title">
+      <option value="mr">Mr</option>
+      <option value="mrs">Mrs</option>
+      <option value="ms">Ms</option>
+    </select>
+    <select id="p_gender">
+      <option value="m">Male</option>
+      <option value="f">Female</option>
+    </select>
+    <input id="p_given" placeholder="First name">
+    <input id="p_family" placeholder="Last name">
+    <input id="p_email" placeholder="Email" class="full-row" value="${escapeHtml(account?.email || '')}">
+    <input id="p_phone" placeholder="+92..." value="${escapeHtml(account?.phone || '')}">
+    <div class="field-label">Date of birth</div>
+    <input id="p_dob" type="date" class="full-row">
+    <div class="field-error full-row" id="p_error" style="display:none;"></div>
+    <button class="submit-btn full-row" id="p_submit">Continue to payment</button>
+  `;
+  chat.appendChild(form);
+  chat.scrollTop = chat.scrollHeight;
+
+  form.querySelector('#p_submit').onclick = () => {
+    const passenger = {
+      title: form.querySelector('#p_title').value,
+      gender: form.querySelector('#p_gender').value,
+      given_name: form.querySelector('#p_given').value.trim(),
+      family_name: form.querySelector('#p_family').value.trim(),
+      email: form.querySelector('#p_email').value.trim(),
+      phone_number: form.querySelector('#p_phone').value.trim(),
+      born_on: form.querySelector('#p_dob').value,
+    };
+    const errorBox = form.querySelector('#p_error');
+    if (!passenger.given_name || !passenger.family_name || !passenger.email ||
+        !passenger.phone_number || !passenger.born_on) {
+      errorBox.textContent = 'Please fill in all traveler details, including date of birth.';
+      errorBox.style.display = 'block';
+      return;
+    }
+    errorBox.style.display = 'none';
+    form.remove();
+    addUserMessage(`${passenger.given_name} ${passenger.family_name} · DOB ${passenger.born_on}`);
+    showPaymentStep(offer, passenger);
+  };
+}
+
+function formatCardNumber(raw) {
+  const digits = raw.replace(/\D/g, '').slice(0, 16);
+  return digits.replace(/(.{4})/g, '$1 ').trim();
+}
+
+function detectBrand(digits) {
+  if (/^4/.test(digits)) return 'visa';
+  if (/^5[1-5]/.test(digits)) return 'mastercard';
+  return null;
+}
+
+function showPaymentStep(offer, passenger) {
+  addBotMessage(`Last step — enter payment details to pay ${offer.price} ${offer.currency} (test mode, no real charge).`);
+
+  const form = document.createElement('div');
+  form.className = 'step-form';
+  form.innerHTML = `
+    <div class="form-title">Payment</div>
+
+    <div class="card-visual">
+      <div class="chip"></div>
+      <div class="num" id="cv_number">•••• •••• •••• ••••</div>
+      <div class="meta">
+        <div>
+          <span>Card holder</span>
+          <span class="name-val" id="cv_name">YOUR NAME</span>
+        </div>
+        <div>
+          <span>Expires</span>
+          <span class="exp-val" id="cv_exp">MM/YY</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-brands">
+      <div class="card-brand" id="brand_visa">VISA</div>
+      <div class="card-brand" id="brand_mc">MASTERCARD</div>
+    </div>
+
+    <input id="c_name" class="full-row" placeholder="Cardholder name">
+    <input id="c_number" class="full-row" placeholder="Card number" inputmode="numeric" maxlength="19">
+    <input id="c_exp" placeholder="MM/YY" maxlength="5">
+    <input id="c_cvc" placeholder="CVC" maxlength="4" inputmode="numeric">
+    <div class="field-error full-row" id="c_error" style="display:none;"></div>
+    <button class="submit-btn full-row" id="c_submit">Pay ${escapeHtml(offer.price)} ${escapeHtml(offer.currency)}</button>
+
+    <div class="or-divider">OR</div>
+    <button class="gpay-btn" id="gpay_btn">Pay with G Pay</button>
+
+    <div class="secure-note">Test mode — no real card is charged. Payment is settled from the agency's Duffel test balance.</div>
+  `;
+  chat.appendChild(form);
+  chat.scrollTop = chat.scrollHeight;
+
+  const numberInput = form.querySelector('#c_number');
+  const nameInput = form.querySelector('#c_name');
+  const expInput = form.querySelector('#c_exp');
+  const cvNumber = form.querySelector('#cv_number');
+  const cvName = form.querySelector('#cv_name');
+  const cvExp = form.querySelector('#cv_exp');
+  const brandVisa = form.querySelector('#brand_visa');
+  const brandMc = form.querySelector('#brand_mc');
+
+  numberInput.addEventListener('input', () => {
+    const formatted = formatCardNumber(numberInput.value);
+    numberInput.value = formatted;
+    const digits = formatted.replace(/\s/g, '');
+    cvNumber.textContent = formatted ? formatted.padEnd(19, '•') : '•••• •••• •••• ••••';
+    const brand = detectBrand(digits);
+    brandVisa.classList.toggle('active', brand === 'visa');
+    brandMc.classList.toggle('active', brand === 'mastercard');
+  });
+
+  nameInput.addEventListener('input', () => {
+    cvName.textContent = nameInput.value.trim().toUpperCase() || 'YOUR NAME';
+  });
+
+  expInput.addEventListener('input', () => {
+    let v = expInput.value.replace(/\D/g, '').slice(0, 4);
+    if (v.length >= 3) v = v.slice(0, 2) + '/' + v.slice(2);
+    expInput.value = v;
+    cvExp.textContent = v || 'MM/YY';
+  });
+
+  form.querySelector('#c_submit').onclick = () => {
+    const errorBox = form.querySelector('#c_error');
+    const digits = numberInput.value.replace(/\s/g, '');
+    const expOk = /^(0[1-9]|1[0-2])\/\d{2}$/.test(expInput.value);
+    const cvc = form.querySelector('#c_cvc').value;
+
+    if (digits.length !== 16 || !nameInput.value.trim() || !expOk || cvc.length < 3) {
+      errorBox.textContent = 'Please check the card number (16 digits), expiry (MM/YY), and CVC.';
+      errorBox.style.display = 'block';
+      return;
+    }
+    errorBox.style.display = 'none';
+    form.remove();
+    addUserMessage(`Paying by card •••• ${digits.slice(-4)}`);
+    confirmBooking(offer, passenger, null);
+  };
+
+  form.querySelector('#gpay_btn').onclick = () => {
+    form.remove();
+    addUserMessage('Paying with G Pay');
+    confirmBooking(offer, passenger, null);
+  };
+}
+
+async function confirmBooking(offer, passenger, btn) {
+  const loading = addBotMessage('<span class="spinner">Confirming your booking...</span>');
 
   try {
     const data = await safeFetchJson('/api/book', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ offer_id: offerId, passenger })
+      body: JSON.stringify({ offer_id: offer.offer_id, passenger })
     });
+    loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-msg">Booking failed: ${data.error}</span>`);
-      btn.disabled = false;
-      btn.textContent = 'Confirm & pay (test)';
+      addBotMessage(`<span class="error-msg">Booking failed: ${escapeHtml(data.error)}</span>`);
       return;
     }
 
@@ -469,16 +813,15 @@ async function confirmBooking(offerId, btn) {
     pnr.className = 'pnr-card';
     pnr.innerHTML = `
       <div class="pnr-label">Booking confirmed</div>
-      <div class="pnr-code">${data.pnr}</div>
-      <div class="pnr-row"><span>Order ID</span><span>${data.order_id}</span></div>
-      <div class="pnr-row"><span>Total paid</span><span>${data.total_paid}</span></div>
+      <div class="pnr-code">${escapeHtml(data.pnr)}</div>
+      <div class="pnr-row"><span>Order ID</span><span>${escapeHtml(data.order_id)}</span></div>
+      <div class="pnr-row"><span>Total paid</span><span>${escapeHtml(data.total_paid)}</span></div>
     `;
     chat.appendChild(pnr);
     chat.scrollTop = chat.scrollHeight;
   } catch (err) {
-    addBotMessage(`<span class="error-msg">Something went wrong: ${err.message}</span>`);
-    btn.disabled = false;
-    btn.textContent = 'Confirm & pay (test)';
+    loading.remove();
+    addBotMessage(`<span class="error-msg">Something went wrong: ${escapeHtml(err.message)}</span>`);
   }
 }
 </script>
