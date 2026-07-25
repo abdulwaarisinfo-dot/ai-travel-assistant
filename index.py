@@ -411,6 +411,10 @@ async def duffel_webhook(request: Request):
     raw_body = await request.body()
     signature_header = request.headers.get("X-Duffel-Signature", "")
 
+    # TEMPORARY DEBUG LOGGING - remove once the 401/malformed issue is resolved
+    print(f"[webhook-debug] ALL headers received: {dict(request.headers)}")
+    print(f"[webhook-debug] raw body: {raw_body[:500]}")
+
     if not DUFFEL_WEBHOOK_SECRET:
         return JSONResponse(status_code=500, content={"success": False, "error": "Webhook secret not configured"})
 
