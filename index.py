@@ -3,12 +3,20 @@ Duffel API - Proof-Slice Backend (FastAPI + Jinja2 Templates)
 ================================================================
 Serves "travelers.html" (chatbot-style search UI) and exposes these endpoints:
 
-    GET  /                      -> renders travelers.html
-    POST /api/search            -> live flight search via Duffel
-    POST /api/chat              -> free-text message -> Claude decides whether to search
-    POST /api/book               -> books the selected offer, returns the PNR
-    POST /api/webhooks/duffel   -> receives order.created and
-                                    order.airline_initiated_change_detected events from Duffel
+    GET  /                       -> renders travelers.html
+    POST /api/search             -> live flight search via Duffel (no auth needed - browsing is open)
+    POST /api/chat               -> free-text message -> Claude decides whether to search
+    POST /api/book                -> books the selected offer, returns the PNR (AUTH REQUIRED)
+    POST /api/webhooks/duffel    -> receives order.created and
+                                     order.airline_initiated_change_detected events from Duffel
+
+    -- Auth (Section 5 - real Google OAuth + email/password) --
+    POST /api/auth/signup         -> create an account with email + password + confirm_password
+    POST /api/auth/login          -> log in with email + password
+    POST /api/auth/logout         -> clear the logged-in session
+    GET  /api/auth/me             -> tells the frontend whether someone is currently logged in
+    GET  /api/auth/google/login   -> redirects the browser into Google's real OAuth consent screen
+    GET  /api/auth/google/callback -> Google redirects back here after the user approves
 
 Running in TEST MODE - no real money or real bookings involved.
 
@@ -29,8 +37,24 @@ IMPORTANT - Duffel API access:
     control that header ourselves (see DUFFEL_VERSION below), so we can keep
     it up to date whenever Duffel ships a new version.
 
+IMPORTANT - Auth model (Section 5):
+    Browsing and searching flights (/api/search, /api/chat) stays OPEN - no
+    login needed. The moment someone actually tries to book a flight
+    (/api/book), a real logged-in account is required - either:
+      a) Email + password (set at signup, confirmed with confirm_password), or
+      b) "Sign in with Google" - a real Google OAuth 2.0 flow. When someone
+         signs in this way there is no password to set/confirm at all; Google
+         is the one that verified their identity.
+    The frontend is expected to call GET /api/auth/me right after the
+    traveler clicks/selects a flight offer, and if `authenticated` comes back
+    false, show a sign-up/sign-in form (email+password+confirm, or a
+    "Continue with Google" button) BEFORE moving on to the passenger-details
+    step. /api/book itself also enforces this server-side, so booking can
+    never happen without a real logged-in account even if the frontend check
+    were skipped.
+
 Setup:
-    pip install requests python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo --break-system-packages
+    pip install requests python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo "passlib[bcrypt]" itsdangerous --break-system-packages
 
 Put your keys in a .env file:
     DUFFEL_ACCESS_TOKEN=duffel_test_XXXXXXXXXXXX
@@ -38,6 +62,14 @@ Put your keys in a .env file:
     MONGODB_URI=mongodb://localhost:27017
     CLAUDE_MODEL=claude-haiku-4-5-20251001
     DUFFEL_WEBHOOK_SECRET=whsec_XXXXXXXXXXXX
+
+    # Real Google OAuth (Section 5) - create these in Google Cloud Console ->
+    # APIs & Services -> Credentials -> OAuth client ID -> Web application.
+    # Add GOOGLE_REDIRECT_URI below as an "Authorized redirect URI" there too.
+    GOOGLE_CLIENT_ID=xxxxxxxxxx.apps.googleusercontent.com
+    GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxx
+    GOOGLE_REDIRECT_URI=http://127.0.0.1:8000/api/auth/google/callback
+    SESSION_SECRET_KEY=some-long-random-string-change-me
 
 Run:
     uvicorn index:app --reload
@@ -49,14 +81,18 @@ import uuid
 import json
 import hmac
 import hashlib
+import secrets
+import urllib.parse
 import datetime
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from passlib.context import CryptContext
 import anthropic
 from pymongo import MongoClient
 
@@ -64,6 +100,27 @@ load_dotenv()  # loads DUFFEL_ACCESS_TOKEN and ANTHROPIC_API_KEY from .env
 
 app = FastAPI(title="AI Travel Assistant - Proof Slice")
 templates = Jinja2Templates(directory="templates")  # travelers.html lives here
+
+# ---------------------------------------------------------------------------
+# Login session cookie (Section 5 - real auth)
+#
+# This is a signed, tamper-proof cookie (Starlette's SessionMiddleware, backed
+# by itsdangerous) that holds request.session["user_email"] once someone logs
+# in - either via email/password or via Google. It is a SEPARATE cookie from
+# the anonymous "session_id" cookie used further down for chat/conversation
+# tracking, so the two never collide.
+# ---------------------------------------------------------------------------
+SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY", "dev-only-insecure-secret-change-me")
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax")
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://127.0.0.1:8000/api/auth/google/callback")
+GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 # ---------------------------------------------------------------------------
 # Duffel REST API Setup (direct HTTP - no duffel_api package)
@@ -157,6 +214,7 @@ async def all_exceptions_handler(request: Request, exc: Exception):
 #   - "conversation_archive"  a copy of a session's history, saved right before
 #                             it gets reset (see archive_and_reset_conversation)
 #   - "bookings"              one document per confirmed booking (see below)
+#   - "users"                 one document per account (Section 5 - real auth)
 # ---------------------------------------------------------------------------
 
 MONGO_URI = os.getenv("MONGODB_URI")
@@ -165,18 +223,20 @@ db = mongo_client["traveling"]
 conversations = db["conversations"]
 webhook_events = db["webhook_events"]  # log of every Duffel webhook event received
 conversation_archive = db["conversation_archive"]  # snapshots of history right before a reset
-bookings = db["bookings"]  # every confirmed booking, keyed by traveler email
+bookings = db["bookings"]  # every confirmed booking, keyed by the logged-in account's email
+users = db["users"]  # accounts - either email+password or Google-linked
 
 
 def init_db():
     """Ensures session_id is indexed and unique, for fast lookups and no duplicates."""
     conversations.create_index("session_id", unique=True)
     conversation_archive.create_index("session_id")
-    # Not unique - the same email can (and should be able to) book more than once.
+    # Not unique - the same account can (and should be able to) book more than once.
     # This index is what lets us quickly answer "how many times has this exact
-    # traveler booked with us before?" without scanning the whole collection.
-    bookings.create_index("email")
+    # account booked with us before?" without scanning the whole collection.
+    bookings.create_index("account_email")
     bookings.create_index("order_id", unique=True)
+    users.create_index("email", unique=True)
 
 
 def load_history(session_id: str) -> list:
@@ -206,8 +266,8 @@ def get_session_id(request: Request, response: Response) -> str:
 
 
 def count_bookings_for_email(email: str) -> int:
-    """How many confirmed bookings this exact traveler (by email) already has."""
-    return bookings.count_documents({"email": email})
+    """How many confirmed bookings this exact logged-in account already has."""
+    return bookings.count_documents({"account_email": email})
 
 
 def archive_and_reset_conversation(session_id: str):
@@ -234,6 +294,59 @@ def archive_and_reset_conversation(session_id: str):
             "archived_at": datetime.datetime.utcnow(),
         })
     save_history(session_id, [])
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers (Section 5 - real Google OAuth + email/password)
+# ---------------------------------------------------------------------------
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def get_user_by_email(email: str):
+    return users.find_one({"email": normalize_email(email)})
+
+
+def create_local_account(email: str, password: str):
+    """Email + password signup. Password is hashed with bcrypt - never stored in plain text."""
+    doc = {
+        "email": normalize_email(email),
+        "password_hash": pwd_context.hash(password),
+        "google_id": None,
+        "name": None,
+        "created_at": datetime.datetime.utcnow(),
+    }
+    users.insert_one(doc)
+    return doc
+
+
+def upsert_google_account(email: str, google_id: str, name: Optional[str]):
+    """
+    Signing in with Google verifies the email for us - no password is ever
+    set or asked for on this path. If an email+password account already
+    exists with this same email, we just link the Google id onto it so
+    either method logs into the same account going forward.
+    """
+    email = normalize_email(email)
+    existing = get_user_by_email(email)
+    if existing:
+        users.update_one({"_id": existing["_id"]}, {"$set": {"google_id": google_id, "name": name or existing.get("name")}})
+        return get_user_by_email(email)
+    doc = {
+        "email": email,
+        "password_hash": None,
+        "google_id": google_id,
+        "name": name,
+        "created_at": datetime.datetime.utcnow(),
+    }
+    users.insert_one(doc)
+    return doc
+
+
+def current_user_email(request: Request) -> Optional[str]:
+    """The logged-in account's email, or None if nobody is logged in on this browser."""
+    return request.session.get("user_email")
 
 
 init_db()
@@ -268,6 +381,17 @@ class BookRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[Dict[str, Any]] = []  # prior conversation, in Anthropic message format
+
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    confirm_password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +492,7 @@ def home(request: Request):
 
 @app.post("/api/search")
 def api_search(req: SearchRequest):
-    """Called when the traveler searches using the manual form"""
+    """Called when the traveler searches using the manual form. No login required - browsing is open."""
     try:
         offers = search_flights(req.origin, req.destination, req.departure_date, req.passengers)
         results = [
@@ -483,6 +607,134 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
     }
 
 
+# ---------------------------------------------------------------------------
+# Auth routes (Section 5 - real Google OAuth + email/password)
+#
+# Searching stays open. The moment a traveler clicks a flight offer, the
+# frontend should call GET /api/auth/me - if authenticated is false, show
+# the sign-up/sign-in form (email + password + confirm_password, or a
+# "Continue with Google" button) before letting them go on to passenger
+# details. /api/book (further below) also checks this itself.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/auth/me")
+def api_auth_me(request: Request):
+    """Lets the frontend check, right after a flight is clicked, whether a login is needed."""
+    email = current_user_email(request)
+    return {"authenticated": bool(email), "email": email}
+
+
+@app.post("/api/auth/signup")
+def api_auth_signup(req: SignupRequest, request: Request):
+    """Email + password signup. Requires password and confirm_password to match."""
+    email = normalize_email(req.email)
+
+    if req.password != req.confirm_password:
+        return {"success": False, "error": "Password and confirm password do not match."}
+    if len(req.password) < 6:
+        return {"success": False, "error": "Password must be at least 6 characters."}
+    if get_user_by_email(email):
+        return {"success": False, "error": "An account with this email already exists. Please log in instead."}
+
+    create_local_account(email, req.password)
+    request.session["user_email"] = email
+    return {"success": True, "email": email}
+
+
+@app.post("/api/auth/login")
+def api_auth_login(req: LoginRequest, request: Request):
+    """Email + password login for accounts that were created with a password."""
+    user = get_user_by_email(req.email)
+    if not user or not user.get("password_hash") or not pwd_context.verify(req.password, user["password_hash"]):
+        return {"success": False, "error": "Incorrect email or password."}
+
+    request.session["user_email"] = user["email"]
+    return {"success": True, "email": user["email"]}
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(request: Request):
+    request.session.clear()
+    return {"success": True}
+
+
+@app.get("/api/auth/google/login")
+def api_auth_google_login(request: Request):
+    """
+    Kicks off the REAL Google OAuth 2.0 flow - sends the browser to Google's
+    own consent screen. Nothing about the user's Google password ever passes
+    through this server; Google authenticates them directly.
+    """
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return JSONResponse(status_code=500, content={
+            "success": False,
+            "error": "Google OAuth is not configured - set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env",
+        })
+
+    state = secrets.token_urlsafe(24)
+    request.session["oauth_state"] = state
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    return RedirectResponse(f"{GOOGLE_AUTH_ENDPOINT}?{urllib.parse.urlencode(params)}")
+
+
+@app.get("/api/auth/google/callback")
+def api_auth_google_callback(request: Request, code: str = None, state: str = None, error: str = None):
+    """
+    Google redirects the browser back here after the user approves (or
+    cancels) the sign-in. We swap the one-time `code` for real tokens
+    server-to-server, then ask Google who this is, and log them in - no
+    password is ever set or needed for this path.
+    """
+    if error or not code:
+        return RedirectResponse("/?auth_error=google_denied")
+
+    if not state or state != request.session.get("oauth_state"):
+        return RedirectResponse("/?auth_error=state_mismatch")
+    request.session.pop("oauth_state", None)
+
+    token_resp = requests.post(
+        GOOGLE_TOKEN_ENDPOINT,
+        data={
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        },
+        timeout=15,
+    )
+    if token_resp.status_code >= 400:
+        return RedirectResponse("/?auth_error=token_exchange_failed")
+
+    access_token = token_resp.json().get("access_token")
+    userinfo_resp = requests.get(
+        GOOGLE_USERINFO_ENDPOINT,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    if userinfo_resp.status_code >= 400:
+        return RedirectResponse("/?auth_error=userinfo_failed")
+
+    info = userinfo_resp.json()
+    email = info.get("email")
+    google_id = info.get("sub")
+    name = info.get("name")
+    if not email or not google_id:
+        return RedirectResponse("/?auth_error=missing_profile")
+
+    upsert_google_account(email, google_id, name)
+    request.session["user_email"] = normalize_email(email)
+    return RedirectResponse("/?auth=success")
+
+
 @app.post("/api/book")
 def api_book(req: BookRequest, request: Request, response: Response):
     """
@@ -490,25 +742,40 @@ def api_book(req: BookRequest, request: Request, response: Response):
     whether they got to this point via the chat conversation or straight from
     the manual search-bar form. Both paths land here the same way, so
     everything below applies identically no matter which one was used.
+
+    AUTH REQUIRED: booking can only go through for a logged-in account
+    (email+password, or Google). This is enforced here server-side even
+    though the frontend should already be gating the flow right after the
+    flight was clicked.
     """
+    account_email = current_user_email(request)
+    if not account_email:
+        return JSONResponse(status_code=401, content={
+            "success": False,
+            "error": "Please sign in (or continue with Google) to complete your booking.",
+        })
+
     session_id = get_session_id(request, response)
     try:
         order = book_flight(req.offer_id, req.passenger.model_dump())
 
         # --- Persist the booking itself (Section 4e extension) ---
-        # How many bookings this exact email already had BEFORE this one -
-        # this is how Python (not Claude) knows this traveler is a repeat
-        # customer if/when they come back later, even in a brand new session.
-        prior_bookings_for_email = count_bookings_for_email(req.passenger.email)
+        # How many bookings this exact logged-in account already had BEFORE
+        # this one - this is how Python (not Claude) knows this traveler is a
+        # repeat customer if/when they come back later, even in a brand new
+        # chat session, since it's tied to their real account, not just a
+        # cookie.
+        prior_bookings_for_account = count_bookings_for_email(account_email)
         bookings.insert_one({
             "session_id": session_id,
+            "account_email": account_email,
             "email": req.passenger.email,
             "order_id": order["id"],
             "pnr": order["booking_reference"],
             "offer_id": req.offer_id,
             "passenger": req.passenger.model_dump(),
             "total_paid": f"{order['total_amount']} {order['total_currency']}",
-            "booking_number_for_email": prior_bookings_for_email + 1,
+            "booking_number_for_account": prior_bookings_for_account + 1,
             "booked_at": datetime.datetime.utcnow(),
         })
 
