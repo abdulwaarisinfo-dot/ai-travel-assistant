@@ -411,18 +411,15 @@ async def duffel_webhook(request: Request):
     raw_body = await request.body()
     signature_header = request.headers.get("X-Duffel-Signature", "")
 
-    # TEMPORARY DEBUG LOGGING - remove once the 401/malformed issue is resolved
-    print(f"[webhook-debug] ALL headers received: {dict(request.headers)}")
-    print(f"[webhook-debug] raw body: {raw_body[:500]}")
-
     if not DUFFEL_WEBHOOK_SECRET:
         return JSONResponse(status_code=500, content={"success": False, "error": "Webhook secret not configured"})
 
-    # Duffel sends the header as: t=<timestamp>,v1=<signature>
+    # Duffel sends the header as: t=<timestamp>,v2=<signature>
+    # (Note: Duffel API v2 uses "v2=" here, not the older "v1=" scheme.)
     try:
         parts = dict(p.split("=", 1) for p in signature_header.split(","))
         timestamp = parts["t"]
-        received_sig = parts["v1"]
+        received_sig = parts["v2"]
     except Exception:
         return JSONResponse(status_code=401, content={"success": False, "error": "Malformed signature header"})
 
@@ -435,12 +432,6 @@ async def duffel_webhook(request: Request):
 
     # Constant-time comparison to avoid timing attacks
     if not hmac.compare_digest(expected_sig, received_sig):
-        # TEMPORARY DEBUG LOGGING - remove once the 401 issue is resolved
-        print(f"[webhook-debug] secret loaded: {bool(DUFFEL_WEBHOOK_SECRET)}, secret length: {len(DUFFEL_WEBHOOK_SECRET or '')}")
-        print(f"[webhook-debug] secret fingerprint: {(DUFFEL_WEBHOOK_SECRET or '')[:4]}...{(DUFFEL_WEBHOOK_SECRET or '')[-4:]}")
-        print(f"[webhook-debug] received signature header: {signature_header}")
-        print(f"[webhook-debug] expected: {expected_sig}")
-        print(f"[webhook-debug] received: {received_sig}")
         return JSONResponse(status_code=401, content={"success": False, "error": "Invalid signature"})
 
     # --- Signature verified - safe to process the event now ---
