@@ -6,195 +6,224 @@
 <title>AI Travel Assistant</title>
 <style>
   :root {
-    --ink: #14213D;
-    --ink-soft: #3A4A6B;
-    --paper: #FBF9F4;
+    --ink: #1C1C1E;
+    --ink-soft: #6E6E73;
+    --paper: #F2F2F5;
     --card: #FFFFFF;
-    --amber: #E8A33D;
-    --amber-dark: #B87A1E;
-    --line: #DDD6C7;
-    --success: #2F7A52;
-    --danger: #B23B3B;
+    --blue: #0A66FF;
+    --blue-soft: #EAF1FF;
+    --line: #E6E6EA;
+    --success: #1F8A55;
+    --danger: #D93B3B;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
     background: var(--paper);
     color: var(--ink);
     display: flex;
     justify-content: center;
-    padding: 24px 16px;
+    padding: 0;
   }
   .app {
     width: 100%;
-    max-width: 560px;
-    background: var(--card);
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(20,33,61,0.08), 0 8px 24px rgba(20,33,61,0.06);
+    max-width: 420px;
+    min-height: 100vh;
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
   }
   .header {
-    background: var(--ink);
-    color: var(--paper);
-    padding: 20px 24px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    background: var(--paper);
+    padding: 18px 20px 14px;
+    text-align: center;
+    position: relative;
   }
-  .header .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--amber);
+  .back-arrow {
+    position: absolute;
+    left: 18px;
+    top: 20px;
+    font-size: 20px;
+    color: var(--ink);
+    cursor: default;
   }
   .header h1 {
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 19px;
+    font-weight: 700;
     margin: 0;
-    letter-spacing: 0.02em;
+    color: var(--ink);
   }
   .header p {
-    margin: 2px 0 0;
-    font-size: 12px;
-    color: #A9B4CC;
+    margin: 3px 0 0;
+    font-size: 14px;
+    color: var(--ink-soft);
   }
   .chat {
-    padding: 20px 20px 8px;
-    max-height: 560px;
+    padding: 6px 16px 10px;
+    flex: 1;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
     scroll-behavior: smooth;
   }
-  .msg {
-    max-width: 82%;
-    padding: 11px 14px;
-    border-radius: 14px;
-    font-size: 14px;
-    line-height: 1.5;
+
+  /* --- Assistant "card" messages (matches reference: label + white card) --- */
+  .assistant-card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 2px rgba(28,28,30,0.04);
   }
-  .msg.bot {
-    background: #F0EDE3;
+  .card-label {
+    color: var(--blue);
+    font-size: 13.5px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .card-body {
+    font-size: 16px;
+    line-height: 1.4;
     color: var(--ink);
-    align-self: flex-start;
-    border-bottom-left-radius: 4px;
   }
+
   .msg.user {
-    background: var(--ink);
-    color: var(--paper);
     align-self: flex-end;
+    max-width: 78%;
+    background: var(--blue-soft);
+    color: var(--ink);
+    padding: 10px 14px;
+    border-radius: 14px;
     border-bottom-right-radius: 4px;
+    font-size: 14.5px;
+    line-height: 1.4;
+  }
+
+  /* --- Recommendation section (matches reference "Recommended" block) --- */
+  .section {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 2px rgba(28,28,30,0.04);
+  }
+  .section-label {
+    color: var(--blue);
+    font-size: 13.5px;
+    font-weight: 600;
+    margin-bottom: 10px;
   }
   .ticket {
-    align-self: flex-start;
-    width: 100%;
-    max-width: 92%;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
   .flight-card {
+    background: #F7F7F9;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    padding: 13px 15px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .flight-card:hover { background: #F0F0F3; }
+  .flight-card.recommended {
     background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 12px 14px;
+    border-color: var(--blue);
+  }
+  .flight-card-top {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    position: relative;
-    cursor: pointer;
-    transition: border-color 0.15s, transform 0.1s;
-  }
-  .flight-card:hover { border-color: var(--amber); transform: translateY(-1px); }
-  .flight-card::before {
-    content: "";
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    width: 3px;
-    background: var(--amber);
-    border-radius: 10px 0 0 10px;
   }
   .flight-info .airline {
-    font-weight: 600;
-    font-size: 13.5px;
-  }
-  .flight-info .code {
-    font-family: "Courier New", monospace;
-    font-size: 11px;
-    color: var(--ink-soft);
-    margin-top: 2px;
-    letter-spacing: 0.03em;
-  }
-  .flight-price {
-    font-family: "Courier New", monospace;
     font-weight: 700;
     font-size: 15px;
-    color: var(--amber-dark);
+    color: var(--ink);
   }
-  .quick-form, .step-form {
-    background: #F7F4EC;
-    border: 1px dashed var(--line);
-    border-radius: 10px;
-    padding: 14px;
+  .flight-price {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .flight-info .code {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  /* --- Forms (signup / passenger / payment) --- */
+  .step-form {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 16px 18px;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
-    align-self: flex-start;
-    width: 100%;
+    box-shadow: 0 1px 2px rgba(28,28,30,0.04);
   }
   .step-form .form-title {
     grid-column: 1 / -1;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-soft);
-    margin-bottom: 2px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--blue);
+    margin-bottom: 4px;
+  }
+  .quick-form {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    box-shadow: 0 1px 2px rgba(28,28,30,0.04);
   }
   .quick-form input,
   .step-form input,
   .step-form select {
-    padding: 8px 10px;
+    padding: 10px 12px;
     border: 1px solid var(--line);
-    border-radius: 6px;
-    font-size: 13px;
+    border-radius: 10px;
+    font-size: 14px;
     font-family: inherit;
-    background: var(--card);
+    background: #F7F7F9;
     color: var(--ink);
   }
   .quick-form input:focus,
   .step-form input:focus,
   .step-form select:focus {
     outline: none;
-    border-color: var(--amber);
+    border-color: var(--blue);
+    background: var(--card);
   }
   .full-row { grid-column: 1 / -1; }
   .field-label {
     grid-column: 1 / -1;
-    font-size: 10.5px;
+    font-size: 12px;
     color: var(--ink-soft);
     margin: 2px 0 -4px;
   }
   .submit-btn {
     grid-column: 1 / -1;
-    background: var(--ink);
-    color: var(--paper);
+    background: var(--blue);
+    color: #FFFFFF;
     border: none;
-    padding: 10px;
-    border-radius: 6px;
-    font-size: 13px;
+    padding: 11px;
+    border-radius: 10px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     margin-top: 2px;
-    transition: background 0.15s;
+    transition: opacity 0.15s;
   }
-  .submit-btn:hover { background: #253256; }
+  .submit-btn:hover { opacity: 0.9; }
   .submit-btn:disabled { opacity: 0.5; cursor: default; }
 
   .field-error {
     grid-column: 1 / -1;
     color: var(--danger);
-    font-size: 11.5px;
+    font-size: 12px;
     margin-top: -4px;
   }
 
@@ -217,15 +246,15 @@
     transition: all 0.15s;
   }
   .card-brand.active {
-    border-color: var(--amber);
-    color: var(--ink);
-    background: #FDF3E2;
+    border-color: var(--blue);
+    color: var(--blue);
+    background: var(--blue-soft);
   }
   .card-visual {
     grid-column: 1 / -1;
-    background: linear-gradient(135deg, var(--ink) 0%, #253256 100%);
-    color: var(--paper);
-    border-radius: 10px;
+    background: linear-gradient(135deg, var(--ink) 0%, #3A3A3E 100%);
+    color: #FFFFFF;
+    border-radius: 12px;
     padding: 14px 16px;
     font-family: "Courier New", monospace;
     margin-bottom: 4px;
@@ -234,7 +263,7 @@
   }
   .card-visual .chip {
     width: 26px; height: 18px;
-    background: linear-gradient(135deg, var(--amber), var(--amber-dark));
+    background: linear-gradient(135deg, #C9D6FF, var(--blue));
     border-radius: 4px;
     margin-bottom: 10px;
   }
@@ -248,25 +277,25 @@
     justify-content: space-between;
     margin-top: 10px;
     font-size: 10px;
-    color: #A9B4CC;
+    color: #B9B9C3;
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
   .card-visual .meta span.name-val, .card-visual .meta span.exp-val {
     display: block;
-    color: var(--paper);
+    color: #FFFFFF;
     font-size: 12px;
     margin-top: 2px;
     text-transform: none;
   }
   .gpay-btn {
     grid-column: 1 / -1;
-    background: var(--card);
+    background: #F7F7F9;
     border: 1px solid var(--line);
     color: var(--ink);
-    padding: 9px;
-    border-radius: 6px;
-    font-size: 12.5px;
+    padding: 10px;
+    border-radius: 10px;
+    font-size: 13.5px;
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -274,13 +303,13 @@
     justify-content: center;
     gap: 6px;
   }
-  .gpay-btn:hover { border-color: var(--amber); }
+  .gpay-btn:hover { border-color: var(--blue); }
   .or-divider {
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 10px;
+    font-size: 11px;
     color: var(--ink-soft);
     margin: 2px 0;
   }
@@ -292,100 +321,105 @@
   }
   .secure-note {
     grid-column: 1 / -1;
-    font-size: 10px;
+    font-size: 11px;
     color: var(--ink-soft);
     text-align: center;
     margin-top: 2px;
   }
 
   .pnr-card {
-    align-self: flex-start;
-    width: 100%;
-    max-width: 92%;
     background: var(--ink);
-    color: var(--paper);
-    border-radius: 12px;
+    color: #FFFFFF;
+    border-radius: 16px;
     padding: 18px;
     position: relative;
     overflow: hidden;
   }
-  .pnr-card::after {
-    content: "";
-    position: absolute;
-    top: 0; bottom: 0; left: 68%;
-    width: 0;
-    border-left: 2px dashed rgba(251,249,244,0.25);
-  }
   .pnr-label {
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    color: #A9B4CC;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: #B9B9C3;
     text-transform: uppercase;
   }
   .pnr-code {
     font-family: "Courier New", monospace;
     font-size: 26px;
     font-weight: 700;
-    color: var(--amber);
+    color: #6FA8FF;
     letter-spacing: 0.08em;
     margin: 4px 0 10px;
   }
   .pnr-row {
     display: flex;
     justify-content: space-between;
-    font-size: 12px;
-    color: #C7CEE0;
+    font-size: 13px;
+    color: #D3D3D8;
     margin-top: 4px;
   }
+
   .composer {
     display: flex;
+    align-items: center;
     gap: 8px;
-    padding: 14px 20px 20px;
-    border-top: 1px solid var(--line);
+    padding: 12px 16px 10px;
   }
   .composer input {
     flex: 1;
-    padding: 11px 14px;
-    border: 1px solid var(--line);
-    border-radius: 20px;
-    font-size: 14px;
-    font-family: inherit;
-  }
-  .composer input:focus { outline: none; border-color: var(--amber); }
-  .composer button {
-    background: var(--amber);
+    padding: 13px 16px;
     border: none;
+    border-radius: 24px;
+    font-size: 14.5px;
+    font-family: inherit;
+    background: #E3E3E8;
     color: var(--ink);
+  }
+  .composer input::placeholder { color: var(--ink-soft); }
+  .composer input:focus { outline: none; }
+  .composer button {
+    background: var(--blue);
+    border: none;
+    color: #FFFFFF;
     font-weight: 700;
-    padding: 0 18px;
-    border-radius: 20px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 15px;
+    flex-shrink: 0;
   }
-  .error-msg { color: #B23B3B; background: #FBEAEA; }
-  .spinner {
-    align-self: flex-start;
-    font-size: 12px;
-    color: var(--ink-soft);
-    font-style: italic;
+  .home-indicator {
+    display: flex;
+    justify-content: center;
+    padding: 6px 0 12px;
   }
+  .home-indicator .bar {
+    width: 120px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--ink);
+    opacity: 0.85;
+  }
+
+  .error-card { color: var(--danger); }
+  .spinner-card { color: var(--ink-soft); font-style: italic; }
 </style>
 </head>
 <body>
 
 <div class="app">
   <div class="header">
-    <div class="dot"></div>
-    <div>
-      <h1>AI Travel Assistant</h1>
-      <p>Live search &middot; test mode</p>
-    </div>
+    <span class="back-arrow">&#8592;</span>
+    <h1>AI Travel Assistant</h1>
+    <p>Live search &middot; test mode</p>
   </div>
 
   <div class="chat" id="chat">
-    <div class="msg bot">
-      Hi! Where would you like to go? Type it below, e.g.
-      "I want to go from Lahore to Islamabad" — or use the form.
+    <div class="assistant-card">
+      <div class="card-label">Chat assistant</div>
+      <div class="card-body">
+        Hi! Where would you like to go? Type it below, e.g.
+        "I want to go from Lahore to Islamabad" — or use the form.
+      </div>
     </div>
     <div class="quick-form" id="searchForm">
       <input id="origin" placeholder="Origin (e.g. KHI)" maxlength="3" style="text-transform:uppercase">
@@ -397,18 +431,21 @@
   </div>
 
   <div class="composer">
-    <input id="freeText" placeholder="e.g. I want to go from Lahore to Islamabad, 15 August" onkeydown="if(event.key==='Enter') sendFreeText()">
-    <button onclick="sendFreeText()">Send</button>
+    <input id="freeText" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendFreeText()">
+    <button onclick="sendFreeText()">&#8594;</button>
   </div>
+  <div class="home-indicator"><div class="bar"></div></div>
 </div>
 
 <script>
 const chat = document.getElementById('chat');
 
+// Bot replies render as an "assistant card": blue label + message body,
+// matching the reference support-chat layout.
 function addBotMessage(html) {
   const div = document.createElement('div');
-  div.className = 'msg bot';
-  div.innerHTML = html;
+  div.className = 'assistant-card';
+  div.innerHTML = `<div class="card-label">Chat assistant</div><div class="card-body">${html}</div>`;
   chat.appendChild(div);
   chat.scrollTop = chat.scrollHeight;
   return div;
@@ -454,7 +491,7 @@ async function sendFreeText() {
   addUserMessage(text);
   input.value = '';
 
-  const loading = addBotMessage('<span class="spinner">Thinking...</span>');
+  const loading = addBotMessage('<span class="spinner-card">Thinking...</span>');
 
   try {
     const data = await safeFetchJson('/api/chat', {
@@ -465,7 +502,7 @@ async function sendFreeText() {
     loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-msg">${escapeHtml(data.error)}</span>`);
+      addBotMessage(`<span class="error-card">${escapeHtml(data.error)}</span>`);
       return;
     }
 
@@ -478,27 +515,30 @@ async function sendFreeText() {
     }
   } catch (err) {
     loading.remove();
-    addBotMessage(`<span class="error-msg">Something went wrong: ${escapeHtml(err.message)}</span>`);
+    addBotMessage(`<span class="error-card">Something went wrong: ${escapeHtml(err.message)}</span>`);
   }
 }
 
 function renderFlightCards(offers) {
-  const ticketWrap = document.createElement('div');
-  ticketWrap.className = 'ticket';
-  offers.forEach(o => {
+  const section = document.createElement('div');
+  section.className = 'section';
+  section.innerHTML = `<div class="section-label">Recommended</div><div class="ticket" id="ticketWrap"></div>`;
+  chat.appendChild(section);
+  const ticketWrap = section.querySelector('#ticketWrap');
+
+  offers.forEach((o, i) => {
     const card = document.createElement('div');
-    card.className = 'flight-card';
+    card.className = 'flight-card' + (i === 0 ? ' recommended' : '');
     card.innerHTML = `
-      <div class="flight-info">
-        <div class="airline">${escapeHtml(o.airline)}</div>
-        <div class="code">offer: ${escapeHtml(o.offer_id.slice(0, 10))}...</div>
+      <div class="flight-card-top">
+        <div class="flight-info airline">${escapeHtml(o.airline)}</div>
+        <div class="flight-price">${escapeHtml(o.price)} ${escapeHtml(o.currency)}</div>
       </div>
-      <div class="flight-price">${escapeHtml(o.price)} ${escapeHtml(o.currency)}</div>
+      <div class="flight-info code">offer: ${escapeHtml(o.offer_id.slice(0, 10))}...</div>
     `;
-    card.onclick = () => selectOffer(o, null, null);
+    card.onclick = () => selectOffer(o);
     ticketWrap.appendChild(card);
   });
-  chat.appendChild(ticketWrap);
   chat.scrollTop = chat.scrollHeight;
 }
 
@@ -514,7 +554,7 @@ async function runSearch() {
   }
 
   addUserMessage(`${origin} → ${destination}, ${date}, ${passengers} passenger(s)`);
-  const loading = addBotMessage('<span class="spinner">Searching flights...</span>');
+  const loading = addBotMessage('<span class="spinner-card">Searching flights...</span>');
 
   try {
     const data = await safeFetchJson('/api/search', {
@@ -525,7 +565,7 @@ async function runSearch() {
     loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-msg">Search failed: ${escapeHtml(data.error)}</span>`);
+      addBotMessage(`<span class="error-card">Search failed: ${escapeHtml(data.error)}</span>`);
       return;
     }
     if (data.offers.length === 0) {
@@ -535,26 +575,29 @@ async function runSearch() {
 
     addBotMessage(`Found ${data.offers.length} options, sorted by price:`);
 
-    const ticketWrap = document.createElement('div');
-    ticketWrap.className = 'ticket';
-    data.offers.forEach(o => {
+    const section = document.createElement('div');
+    section.className = 'section';
+    section.innerHTML = `<div class="section-label">Recommended</div><div class="ticket" id="ticketWrap"></div>`;
+    chat.appendChild(section);
+    const ticketWrap = section.querySelector('#ticketWrap');
+
+    data.offers.forEach((o, i) => {
       const card = document.createElement('div');
-      card.className = 'flight-card';
+      card.className = 'flight-card' + (i === 0 ? ' recommended' : '');
       card.innerHTML = `
-        <div class="flight-info">
-          <div class="airline">${escapeHtml(o.airline)}</div>
-          <div class="code">${escapeHtml(origin)} → ${escapeHtml(destination)} · ${escapeHtml(date)}</div>
+        <div class="flight-card-top">
+          <div class="flight-info airline">${escapeHtml(o.airline)}</div>
+          <div class="flight-price">${escapeHtml(o.price)} ${escapeHtml(o.currency)}</div>
         </div>
-        <div class="flight-price">${escapeHtml(o.price)} ${escapeHtml(o.currency)}</div>
+        <div class="flight-info code">${escapeHtml(origin)} → ${escapeHtml(destination)} · ${escapeHtml(date)}</div>
       `;
-      card.onclick = () => selectOffer(o, origin, destination, date);
+      card.onclick = () => selectOffer(o);
       ticketWrap.appendChild(card);
     });
-    chat.appendChild(ticketWrap);
     chat.scrollTop = chat.scrollHeight;
   } catch (err) {
     loading.remove();
-    addBotMessage(`<span class="error-msg">Something went wrong: ${escapeHtml(err.message)}</span>`);
+    addBotMessage(`<span class="error-card">Something went wrong: ${escapeHtml(err.message)}</span>`);
   }
 }
 
@@ -794,7 +837,7 @@ function showPaymentStep(offer, passenger) {
 }
 
 async function confirmBooking(offer, passenger, btn) {
-  const loading = addBotMessage('<span class="spinner">Confirming your booking...</span>');
+  const loading = addBotMessage('<span class="spinner-card">Confirming your booking...</span>');
 
   try {
     const data = await safeFetchJson('/api/book', {
@@ -805,7 +848,7 @@ async function confirmBooking(offer, passenger, btn) {
     loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-msg">Booking failed: ${escapeHtml(data.error)}</span>`);
+      addBotMessage(`<span class="error-card">Booking failed: ${escapeHtml(data.error)}</span>`);
       return;
     }
 
@@ -821,7 +864,7 @@ async function confirmBooking(offer, passenger, btn) {
     chat.scrollTop = chat.scrollHeight;
   } catch (err) {
     loading.remove();
-    addBotMessage(`<span class="error-msg">Something went wrong: ${escapeHtml(err.message)}</span>`);
+    addBotMessage(`<span class="error-card">Something went wrong: ${escapeHtml(err.message)}</span>`);
   }
 }
 </script>
