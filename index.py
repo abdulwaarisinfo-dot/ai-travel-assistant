@@ -373,7 +373,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
     # Case A - Claude did NOT call the tool yet (info missing, or just replying)
     if response_msg.stop_reason != "tool_use":
         reply_text = "".join(b.text for b in response_msg.content if b.type == "text")
-        updated_history = messages + [{"role": "assistant", "content": response_msg.content}]
+        updated_history = messages + [{"role": "assistant", "content": [b.model_dump() for b in response_msg.content]}]
         save_history(session_id, updated_history)
         return {"success": True, "reply": reply_text, "offers": None, "history": updated_history}
 
@@ -408,7 +408,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
 
     # Send the tool result back to Claude so it can write a reply for the customer
     follow_up_messages = messages + [
-        {"role": "assistant", "content": response_msg.content},
+        {"role": "assistant", "content": [b.model_dump() for b in response_msg.content]},
         {"role": "user", "content": [tool_result_content]},
     ]
     final_response = claude.messages.create(
@@ -419,7 +419,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
         messages=follow_up_messages,
     )
     reply_text = "".join(b.text for b in final_response.content if b.type == "text")
-    updated_history = follow_up_messages + [{"role": "assistant", "content": final_response.content}]
+    updated_history = follow_up_messages + [{"role": "assistant", "content": [b.model_dump() for b in final_response.content]}]
     save_history(session_id, updated_history)
 
     return {
