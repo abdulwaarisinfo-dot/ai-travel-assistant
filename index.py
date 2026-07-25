@@ -4,10 +4,9 @@ Duffel API - Proof-Slice Backend (FastAPI + Jinja2 Templates)
 Serves "travelers.html" (chatbot-style search UI) and exposes these endpoints:
 
     GET  /                      -> renders travelers.html
-    POST /api/search            -> live flight search via Duffel (adults + children)
+    POST /api/search            -> live flight search via Duffel
     POST /api/chat              -> free-text message -> Claude decides whether to search
-    POST /api/book               -> books the selected offer for ALL passengers
-                                    (adults + children), returns the PNR
+    POST /api/book               -> books the selected offer, returns the PNR
     POST /api/webhooks/duffel   -> receives order.created and
                                     order.airline_initiated_change_detected events from Duffel
 
@@ -24,18 +23,6 @@ IMPORTANT - Duffel API access:
     fail with "Unsupported version". Talking to the REST API directly lets us
     control that header ourselves (see DUFFEL_VERSION below), so we can keep
     it up to date whenever Duffel ships a new version.
-
-IMPORTANT - Adults / children:
-    Real travelers rarely search "3 passengers" - they search "2 adults, 1 child".
-    So /api/search and Claude's search_flights tool now take separate `adults`
-    and `children` counts instead of one flat `passengers` number. Duffel builds
-    a distinct offer "passenger slot" (with its own id) for every adult and every
-    child, and each slot's type (adult/child) is fixed at search time.
-
-    Because of that, booking a multi-passenger offer can't just take ONE
-    passenger's details anymore - it needs one passenger's details PER slot,
-    with each one correctly matched back to an adult or child slot on the offer
-    (see book_flight() below for how that matching is done).
 
 Setup:
     pip install requests python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo --break-system-packages
@@ -64,7 +51,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from typing import List, Dict, Any, Literal
+from typing import List, Dict, Any
 import anthropic
 from pymongo import MongoClient
 
@@ -114,35 +101,25 @@ SYSTEM_PROMPT = """You are an AI assistant for a travel agency. Customers write 
 in English (e.g. "I want to go from Lahore to Islamabad").
 
 Your job:
-1. Extract the route (origin/destination city), travel date, and the number of
-   adult and child passengers. "Child" means a passenger roughly 2-11 years old
-   travelling with their own seat. If the customer just says "2 people" or
-   "3 passengers" with no mention of children, assume they are all adults.
+1. Extract the route (origin/destination city), travel date, and passenger count.
 2. Convert city names to their 3-letter IATA airport codes yourself
    (e.g. Lahore=LHR, Islamabad=ISB, Karachi=KHI, Istanbul=IST, Dubai=DXB).
-3. If the date is missing, do NOT call the search_flights tool yet -
+3. If the date or passenger count is missing, do NOT call the search_flights tool yet -
    ask the customer a short, friendly follow-up question in English first.
-4. Once you have origin, destination, and date, call the search_flights tool
-   with the adults and children counts you've gathered (default adults=1,
-   children=0 if the customer never mentions passenger counts at all).
+4. Once you have origin, destination, and date, call the search_flights tool.
 5. Always reply in English. Keep responses short and direct - no long explanations.
-6. Do NOT use Markdown formatting (no **bold**, no numbered/bulleted lists with - or *,
-   no headers). The chat UI displays your reply as plain text, so Markdown symbols would
-   show up literally instead of being styled. Write plain sentences instead, e.g. use
-   "1)" or simple line breaks for lists if needed.
 """
 
 SEARCH_TOOL = {
     "name": "search_flights",
-    "description": "Searches for flights between two airports on a specific date, for a given number of adult and child passengers.",
+    "description": "Searches for flights between two airports on a specific date.",
     "input_schema": {
         "type": "object",
         "properties": {
             "origin": {"type": "string", "description": "3-letter IATA code, departure city"},
             "destination": {"type": "string", "description": "3-letter IATA code, arrival city"},
             "departure_date": {"type": "string", "description": "Format: YYYY-MM-DD"},
-            "adults": {"type": "integer", "description": "Number of adult passengers (age 12+)", "default": 1},
-            "children": {"type": "integer", "description": "Number of child passengers (roughly age 2-11)", "default": 0},
+            "passengers": {"type": "integer", "description": "Number of adult passengers", "default": 1},
         },
         "required": ["origin", "destination", "departure_date"],
     },
@@ -179,7 +156,6 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["traveling"]
 conversations = db["conversations"]
 webhook_events = db["webhook_events"]  # log of every Duffel webhook event received
-users = db["users"]  # DEMO ONLY - dummy account records for the signup flow (not real auth)
 
 
 def init_db():
@@ -224,8 +200,7 @@ class SearchRequest(BaseModel):
     origin: str
     destination: str
     departure_date: str
-    adults: int = 1
-    children: int = 0
+    passengers: int = 1
 
 
 class PassengerDetails(BaseModel):
@@ -236,21 +211,11 @@ class PassengerDetails(BaseModel):
     born_on: str
     gender: str = "m"
     title: str = "mr"
-    # Which slot this passenger fills on the offer - "adult" or "child".
-    # NOT sent to Duffel directly (see book_flight below); it's only used
-    # here to match each set of details back to the right passenger id.
-    type: Literal["adult", "child"] = "adult"
-
-
-class SignupRequest(BaseModel):
-    email: str
-    phone_number: str
-    password: str
 
 
 class BookRequest(BaseModel):
     offer_id: str
-    passengers: List[PassengerDetails]  # one entry per adult/child on the offer
+    passenger: PassengerDetails
 
 
 class ChatRequest(BaseModel):
@@ -262,22 +227,13 @@ class ChatRequest(BaseModel):
 # STEP 1 - Flight Search (the first step of aggregation)
 # ---------------------------------------------------------------------------
 
-def search_flights(origin: str, destination: str, departure_date: str, adults: int = 1, children: int = 0):
+def search_flights(origin: str, destination: str, departure_date: str, passengers: int = 1):
     """
     Sends an 'offer_request' to Duffel via direct HTTP call - i.e. tells it
-    "give me options for this route, this date, for this many adults and children"
-
-    Duffel creates one passenger "slot" per adult and per child, each with its
-    own type - those slots (and their ids) are what we later match real
-    passenger details to when booking.
+    "give me options for this route, this date, this many passengers"
 
     Returns: top 3 offers (as plain dicts), sorted by price (cheapest first)
     """
-    passengers_payload = (
-        [{"type": "adult"} for _ in range(adults)]
-        + [{"type": "child"} for _ in range(children)]
-    )
-
     body = {
         "data": {
             "slices": [{
@@ -285,7 +241,7 @@ def search_flights(origin: str, destination: str, departure_date: str, adults: i
                 "destination": destination,
                 "departure_date": departure_date,
             }],
-            "passengers": passengers_payload,
+            "passengers": [{"type": "adult"} for _ in range(passengers)],
             "cabin_class": "economy",
         }
     }
@@ -310,21 +266,12 @@ def search_flights(origin: str, destination: str, departure_date: str, adults: i
 # STEP 2 - Create the Booking (Order)
 # ---------------------------------------------------------------------------
 
-def book_flight(offer_id: str, passengers_details: List[dict]):
+def book_flight(offer_id: str, passenger_details: dict):
     """
-    Books every passenger on the offer - not just one. Each offer has a fixed
-    list of passenger "slots" (one per adult/child requested at search time),
-    each with its own id and type ("adult" or "child"). We match the details
-    submitted from the booking form back to those slots BY TYPE, not by
-    position, so it doesn't matter what order the form filled them in:
-
-        offer's adult slots  <- zipped with -> submitted adult passengers
-        offer's child slots  <- zipped with -> submitted child passengers
-
     Uses payment type "balance" - meaning it's deducted automatically from the
     agency's Duffel wallet (which was topped up earlier in test mode).
     """
-    # Fetch the offer first, to get its passenger ids/types, current price, and currency
+    # Fetch the offer first, to get its passenger id, current price, and currency
     resp = requests.get(
         f"{DUFFEL_API_BASE}/air/offers/{offer_id}",
         headers=DUFFEL_HEADERS,
@@ -335,28 +282,6 @@ def book_flight(offer_id: str, passengers_details: List[dict]):
         raise Exception(duffel_error_message(resp))
     offer = resp.json()["data"]
 
-    offer_adult_ids = [p["id"] for p in offer["passengers"] if p.get("type") == "adult"]
-    offer_child_ids = [p["id"] for p in offer["passengers"] if p.get("type") == "child"]
-
-    submitted_adults = [p for p in passengers_details if p.get("type", "adult") == "adult"]
-    submitted_children = [p for p in passengers_details if p.get("type") == "child"]
-
-    if len(submitted_adults) != len(offer_adult_ids) or len(submitted_children) != len(offer_child_ids):
-        raise Exception(
-            f"Passenger details don't match this offer: offer needs "
-            f"{len(offer_adult_ids)} adult(s) and {len(offer_child_ids)} child(ren), "
-            f"but {len(submitted_adults)} adult and {len(submitted_children)} child "
-            f"passenger detail(s) were submitted."
-        )
-
-    order_passengers = []
-    for offer_id_slot, details in zip(offer_adult_ids, submitted_adults):
-        details = {k: v for k, v in details.items() if k != "type"}
-        order_passengers.append({"id": offer_id_slot, **details})
-    for offer_id_slot, details in zip(offer_child_ids, submitted_children):
-        details = {k: v for k, v in details.items() if k != "type"}
-        order_passengers.append({"id": offer_id_slot, **details})
-
     order_body = {
         "data": {
             "selected_offers": [offer_id],
@@ -365,7 +290,10 @@ def book_flight(offer_id: str, passengers_details: List[dict]):
                 "currency": offer["total_currency"],
                 "amount": offer["total_amount"],
             }],
-            "passengers": order_passengers,
+            "passengers": [{
+                "id": offer["passengers"][0]["id"],
+                **passenger_details,
+            }],
         }
     }
 
@@ -395,7 +323,7 @@ def home(request: Request):
 def api_search(req: SearchRequest):
     """Called when the traveler searches using the manual form"""
     try:
-        offers = search_flights(req.origin, req.destination, req.departure_date, req.adults, req.children)
+        offers = search_flights(req.origin, req.destination, req.departure_date, req.passengers)
         results = [
             {
                 "offer_id": o["id"],
@@ -418,7 +346,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
     Takes a free-text message (e.g. "I want to go from Lahore to Islamabad")
     and sends it to Claude. Claude ITSELF decides:
       - If the info is complete -> calls the search_flights tool
-      - If info is missing (date) -> asks first, does NOT call the tool
+      - If info is missing (date/passengers) -> asks first, does NOT call the tool
 
     Python is only the "hands" here - the decision always belongs to Claude.
 
@@ -458,8 +386,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
             origin=args["origin"],
             destination=args["destination"],
             departure_date=args["departure_date"],
-            adults=args.get("adults", 1),
-            children=args.get("children", 0),
+            passengers=args.get("passengers", 1),
         )
         results = [
             {"offer_id": o["id"], "airline": o["owner"]["name"], "price": o["total_amount"], "currency": o["total_currency"]}
@@ -503,44 +430,11 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
     }
 
 
-@app.post("/api/signup")
-def api_signup(req: SignupRequest):
-    """
-    DEMO ONLY - creates a dummy account record so the booking flow feels like
-    a real travel site (sign up -> fill passenger details -> pay -> confirm).
-    This is NOT a real authentication system: there's no login, no session
-    tied to it, and it isn't used to authorize the booking. It exists purely
-    so the agency owner sees the full realistic flow during the demo.
-
-    The password is hashed before storage (never stored in plain text) as
-    basic good practice, even though this isn't a production auth system.
-    """
-    try:
-        password_hash = hashlib.sha256(req.password.encode("utf-8")).hexdigest()
-        users.update_one(
-            {"email": req.email},
-            {"$set": {
-                "email": req.email,
-                "phone_number": req.phone_number,
-                "password_hash": password_hash,
-                "created_at": datetime.datetime.utcnow(),
-            }},
-            upsert=True,
-        )
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 @app.post("/api/book")
 def api_book(req: BookRequest):
-    """
-    Called when the traveler submits the passenger form(s) to confirm booking.
-    Now takes ONE set of passenger details PER adult/child on the offer
-    (req.passengers is a list), instead of assuming a single traveler.
-    """
+    """Called when the traveler submits the passenger form to confirm booking"""
     try:
-        order = book_flight(req.offer_id, [p.model_dump() for p in req.passengers])
+        order = book_flight(req.offer_id, req.passenger.model_dump())
         return {
             "success": True,
             "pnr": order["booking_reference"],
