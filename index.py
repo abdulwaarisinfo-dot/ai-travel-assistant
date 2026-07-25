@@ -15,8 +15,17 @@ Running in TEST MODE - no real money or real bookings involved.
 Requires MongoDB running locally (or a MONGODB_URI pointing to one) - conversation
 history is stored in the "traveling" database, "conversations" collection.
 
+IMPORTANT - Duffel API access:
+    This version talks to the Duffel REST API directly over HTTP (using the
+    `requests` library) instead of the `duffel_api` PyPI package. That package
+    is no longer maintained by Duffel and hardcodes an old `Duffel-Version`
+    header, which Duffel has since discontinued - causing every request to
+    fail with "Unsupported version". Talking to the REST API directly lets us
+    control that header ourselves (see DUFFEL_VERSION below), so we can keep
+    it up to date whenever Duffel ships a new version.
+
 Setup:
-    pip install duffel_api python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo --break-system-packages
+    pip install requests python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo --break-system-packages
 
 Put your keys in a .env file:
     DUFFEL_ACCESS_TOKEN=duffel_test_XXXXXXXXXXXX
@@ -36,8 +45,8 @@ import json
 import hmac
 import hashlib
 import datetime
+import requests
 from dotenv import load_dotenv
-from duffel_api import Duffel
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -51,9 +60,32 @@ load_dotenv()  # loads DUFFEL_ACCESS_TOKEN and ANTHROPIC_API_KEY from .env
 app = FastAPI(title="AI Travel Assistant - Proof Slice")
 templates = Jinja2Templates(directory="templates")  # travelers.html lives here
 
-# --- Duffel Client Setup ---
-# Never hardcode the token in code - always read it from an environment variable
-client = Duffel(access_token=os.getenv("DUFFEL_ACCESS_TOKEN"))
+# ---------------------------------------------------------------------------
+# Duffel REST API Setup (direct HTTP - no duffel_api package)
+# ---------------------------------------------------------------------------
+DUFFEL_API_BASE = "https://api.duffel.com"
+DUFFEL_VERSION = "v2"  # bump this if Duffel ships a new API version in future
+DUFFEL_ACCESS_TOKEN = os.getenv("DUFFEL_ACCESS_TOKEN")
+
+DUFFEL_HEADERS = {
+    "Authorization": f"Bearer {DUFFEL_ACCESS_TOKEN}",
+    "Duffel-Version": DUFFEL_VERSION,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Accept-Encoding": "gzip",
+}
+
+
+def duffel_error_message(resp: requests.Response) -> str:
+    """Pulls a readable error message out of a Duffel error response body."""
+    try:
+        errors = resp.json().get("errors", [])
+        if errors:
+            return errors[0].get("message", resp.text)
+    except Exception:
+        pass
+    return f"Duffel API error (status {resp.status_code}): {resp.text}"
+
 
 # --- Duffel Webhook Setup ---
 # Signing secret shown by Duffel when you register the webhook endpoint in
@@ -197,31 +229,37 @@ class ChatRequest(BaseModel):
 
 def search_flights(origin: str, destination: str, departure_date: str, passengers: int = 1):
     """
-    Sends an 'offer_request' to Duffel - i.e. tells it
+    Sends an 'offer_request' to Duffel via direct HTTP call - i.e. tells it
     "give me options for this route, this date, this many passengers"
 
-    Note: the duffel_api library uses a builder/chaining pattern here
-    (create() -> .slices(...) -> .passengers(...) -> .execute()), not plain
-    keyword arguments - that mismatch was the cause of the earlier
-    "unexpected keyword argument 'slices'" error.
-
-    Returns: top 3 offers, sorted by price (cheapest first)
+    Returns: top 3 offers (as plain dicts), sorted by price (cheapest first)
     """
-    offer_request = (
-        client.offer_requests.create()
-        .slices([{
-            "origin": origin,
-            "destination": destination,
-            "departure_date": departure_date,
-        }])
-        .passengers([{"type": "adult"} for _ in range(passengers)])
-        .cabin_class("economy")
-        .return_offers()  # without this, offer_request.offers comes back empty
-        .execute()
-    )
+    body = {
+        "data": {
+            "slices": [{
+                "origin": origin,
+                "destination": destination,
+                "departure_date": departure_date,
+            }],
+            "passengers": [{"type": "adult"} for _ in range(passengers)],
+            "cabin_class": "economy",
+        }
+    }
 
-    offers = sorted(offer_request.offers, key=lambda o: float(o.total_amount))
-    return offers[:3]  # only show top 3, as specified in the brief
+    resp = requests.post(
+        f"{DUFFEL_API_BASE}/air/offer_requests",
+        headers=DUFFEL_HEADERS,
+        params={"return_offers": "true"},
+        json=body,
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        raise Exception(duffel_error_message(resp))
+
+    offer_request = resp.json()["data"]
+    offers = offer_request.get("offers", [])
+    offers_sorted = sorted(offers, key=lambda o: float(o["total_amount"]))
+    return offers_sorted[:3]  # only show top 3, as specified in the brief
 
 
 # ---------------------------------------------------------------------------
@@ -232,27 +270,43 @@ def book_flight(offer_id: str, passenger_details: dict):
     """
     Uses payment type "balance" - meaning it's deducted automatically from the
     agency's Duffel wallet (which was topped up earlier in test mode).
-
-    Same builder pattern as search_flights: create() -> .selected_offers(...)
-    -> .payments(...) -> .passengers(...) -> .execute().
     """
-    offer = client.offers.get(offer_id, return_available_services=True)
-
-    order = (
-        client.orders.create()
-        .selected_offers([offer_id])
-        .payments([{
-            "type": "balance",
-            "currency": offer.total_currency,
-            "amount": offer.total_amount,
-        }])
-        .passengers([{
-            "id": offer.passengers[0].id,
-            **passenger_details,
-        }])
-        .execute()
+    # Fetch the offer first, to get its passenger id, current price, and currency
+    resp = requests.get(
+        f"{DUFFEL_API_BASE}/air/offers/{offer_id}",
+        headers=DUFFEL_HEADERS,
+        params={"return_available_services": "true"},
+        timeout=30,
     )
-    return order
+    if resp.status_code >= 400:
+        raise Exception(duffel_error_message(resp))
+    offer = resp.json()["data"]
+
+    order_body = {
+        "data": {
+            "selected_offers": [offer_id],
+            "payments": [{
+                "type": "balance",
+                "currency": offer["total_currency"],
+                "amount": offer["total_amount"],
+            }],
+            "passengers": [{
+                "id": offer["passengers"][0]["id"],
+                **passenger_details,
+            }],
+        }
+    }
+
+    resp = requests.post(
+        f"{DUFFEL_API_BASE}/air/orders",
+        headers=DUFFEL_HEADERS,
+        json=order_body,
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        raise Exception(duffel_error_message(resp))
+
+    return resp.json()["data"]
 
 
 # ---------------------------------------------------------------------------
@@ -272,10 +326,10 @@ def api_search(req: SearchRequest):
         offers = search_flights(req.origin, req.destination, req.departure_date, req.passengers)
         results = [
             {
-                "offer_id": o.id,
-                "airline": o.owner.name,
-                "price": o.total_amount,
-                "currency": o.total_currency,
+                "offer_id": o["id"],
+                "airline": o["owner"]["name"],
+                "price": o["total_amount"],
+                "currency": o["total_currency"],
             }
             for o in offers
         ]
@@ -296,7 +350,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
 
     Python is only the "hands" here - the decision always belongs to Claude.
 
-    Conversation history is now loaded from and saved to SQLite, keyed by a
+    Conversation history is loaded from and saved to MongoDB, keyed by a
     session_id cookie - so it survives page reloads/server restarts, and two
     different users' conversations can never mix up with each other.
     """
@@ -335,7 +389,7 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
             passengers=args.get("passengers", 1),
         )
         results = [
-            {"offer_id": o.id, "airline": o.owner.name, "price": o.total_amount, "currency": o.total_currency}
+            {"offer_id": o["id"], "airline": o["owner"]["name"], "price": o["total_amount"], "currency": o["total_currency"]}
             for o in offers
         ]
         tool_result_content = {
@@ -383,9 +437,9 @@ def api_book(req: BookRequest):
         order = book_flight(req.offer_id, req.passenger.model_dump())
         return {
             "success": True,
-            "pnr": order.booking_reference,
-            "order_id": order.id,
-            "total_paid": f"{order.total_amount} {order.total_currency}",
+            "pnr": order["booking_reference"],
+            "order_id": order["id"],
+            "total_paid": f"{order['total_amount']} {order['total_currency']}",
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
