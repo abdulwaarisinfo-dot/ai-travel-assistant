@@ -108,6 +108,10 @@ Your job:
    ask the customer a short, friendly follow-up question in English first.
 4. Once you have origin, destination, and date, call the search_flights tool.
 5. Always reply in English. Keep responses short and direct - no long explanations.
+6. Do NOT use Markdown formatting (no **bold**, no numbered/bulleted lists with - or *,
+   no headers). The chat UI displays your reply as plain text, so Markdown symbols would
+   show up literally instead of being styled. Write plain sentences instead, e.g. use
+   "1)" or simple line breaks for lists if needed.
 """
 
 SEARCH_TOOL = {
@@ -156,6 +160,7 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["traveling"]
 conversations = db["conversations"]
 webhook_events = db["webhook_events"]  # log of every Duffel webhook event received
+users = db["users"]  # DEMO ONLY - dummy account records for the signup flow (not real auth)
 
 
 def init_db():
@@ -211,6 +216,12 @@ class PassengerDetails(BaseModel):
     born_on: str
     gender: str = "m"
     title: str = "mr"
+
+
+class SignupRequest(BaseModel):
+    email: str
+    phone_number: str
+    password: str
 
 
 class BookRequest(BaseModel):
@@ -428,6 +439,35 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
         "offers": results if results else None,
         "history": updated_history,
     }
+
+
+@app.post("/api/signup")
+def api_signup(req: SignupRequest):
+    """
+    DEMO ONLY - creates a dummy account record so the booking flow feels like
+    a real travel site (sign up -> fill passenger details -> pay -> confirm).
+    This is NOT a real authentication system: there's no login, no session
+    tied to it, and it isn't used to authorize the booking. It exists purely
+    so the agency owner sees the full realistic flow during the demo.
+
+    The password is hashed before storage (never stored in plain text) as
+    basic good practice, even though this isn't a production auth system.
+    """
+    try:
+        password_hash = hashlib.sha256(req.password.encode("utf-8")).hexdigest()
+        users.update_one(
+            {"email": req.email},
+            {"$set": {
+                "email": req.email,
+                "phone_number": req.phone_number,
+                "password_hash": password_hash,
+                "created_at": datetime.datetime.utcnow(),
+            }},
+            upsert=True,
+        )
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/book")
