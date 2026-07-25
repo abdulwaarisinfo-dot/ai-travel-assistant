@@ -1,12 +1,14 @@
 """
 Duffel API - Proof-Slice Backend (FastAPI + Jinja2 Templates)
 ================================================================
-Serves "travelers.html" (chatbot-style search UI) and exposes three endpoints:
+Serves "travelers.html" (chatbot-style search UI) and exposes these endpoints:
 
-    GET  /                -> renders travelers.html
-    POST /api/search      -> live flight search via Duffel
-    POST /api/chat        -> free-text message -> Claude decides whether to search
-    POST /api/book        -> books the selected offer, returns the PNR
+    GET  /                      -> renders travelers.html
+    POST /api/search            -> live flight search via Duffel
+    POST /api/chat              -> free-text message -> Claude decides whether to search
+    POST /api/book               -> books the selected offer, returns the PNR
+    POST /api/webhooks/duffel   -> receives order.created and
+                                    order.airline_initiated_change_detected events from Duffel
 
 Running in TEST MODE - no real money or real bookings involved.
 
@@ -20,14 +22,20 @@ Put your keys in a .env file:
     DUFFEL_ACCESS_TOKEN=duffel_test_XXXXXXXXXXXX
     ANTHROPIC_API_KEY=sk-ant-XXXXXXXXXXXX
     MONGODB_URI=mongodb://localhost:27017
+    CLAUDE_MODEL=claude-haiku-4-5-20251001
+    DUFFEL_WEBHOOK_SECRET=whsec_XXXXXXXXXXXX
 
 Run:
-    uvicorn duffel_test_flow:app --reload
+    uvicorn index:app --reload
     Then open: http://127.0.0.1:8000
 """
 
 import os
 import uuid
+import json
+import hmac
+import hashlib
+import datetime
 from dotenv import load_dotenv
 from duffel_api import Duffel
 from fastapi import FastAPI, Request, Response
@@ -47,9 +55,15 @@ templates = Jinja2Templates(directory="templates")  # travelers.html lives here
 # Never hardcode the token in code - always read it from an environment variable
 client = Duffel(access_token=os.getenv("DUFFEL_ACCESS_TOKEN"))
 
+# --- Duffel Webhook Setup ---
+# Signing secret shown by Duffel when you register the webhook endpoint in
+# their dashboard. Used to verify incoming webhook requests are genuinely
+# from Duffel (see duffel_webhook() route below).
+DUFFEL_WEBHOOK_SECRET = os.getenv("DUFFEL_WEBHOOK_SECRET")
+
 # --- Claude Client Setup (Section 4d - AI Orchestration) ---
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # cheap/fast - enough for this task
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")  # cheap/fast - enough for this task
 
 SYSTEM_PROMPT = """You are an AI assistant for a travel agency. Customers write free text
 in English (e.g. "I want to go from Lahore to Islamabad").
@@ -109,6 +123,7 @@ MONGO_URI = os.getenv("MONGODB_URI")
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["traveling"]
 conversations = db["conversations"]
+webhook_events = db["webhook_events"]  # log of every Duffel webhook event received
 
 
 def init_db():
@@ -124,7 +139,7 @@ def load_history(session_id: str) -> list:
 def save_history(session_id: str, history: list):
     conversations.update_one(
         {"session_id": session_id},
-        {"$set": {"history": history, "updated_at": __import__("datetime").datetime.utcnow()}},
+        {"$set": {"history": history, "updated_at": datetime.datetime.utcnow()}},
         upsert=True,
     )
 
@@ -374,3 +389,71 @@ def api_book(req: BookRequest):
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Webhook - Receives events from Duffel (order.created,
+# order.airline_initiated_change_detected)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/webhooks/duffel")
+async def duffel_webhook(request: Request):
+    """
+    Duffel calls this URL whenever a subscribed event happens
+    (order.created, order.airline_initiated_change_detected).
+
+    Security: Duffel signs every webhook request with your webhook secret.
+    We must read the RAW request body (not FastAPI's parsed JSON) because
+    the signature is computed over the exact bytes Duffel sent - if we let
+    FastAPI parse and reserialize the body first, the bytes could differ
+    slightly and the signature check would fail.
+    """
+    raw_body = await request.body()
+    signature_header = request.headers.get("Duffel-Signature", "")
+
+    if not DUFFEL_WEBHOOK_SECRET:
+        return JSONResponse(status_code=500, content={"success": False, "error": "Webhook secret not configured"})
+
+    # Duffel sends the header as: t=<timestamp>,v1=<signature>
+    try:
+        parts = dict(p.split("=", 1) for p in signature_header.split(","))
+        timestamp = parts["t"]
+        received_sig = parts["v1"]
+    except Exception:
+        return JSONResponse(status_code=401, content={"success": False, "error": "Malformed signature header"})
+
+    signed_payload = f"{timestamp}.{raw_body.decode('utf-8')}"
+    expected_sig = hmac.new(
+        DUFFEL_WEBHOOK_SECRET.encode("utf-8"),
+        signed_payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    # Constant-time comparison to avoid timing attacks
+    if not hmac.compare_digest(expected_sig, received_sig):
+        return JSONResponse(status_code=401, content={"success": False, "error": "Invalid signature"})
+
+    # --- Signature verified - safe to process the event now ---
+    payload = json.loads(raw_body)
+    event_type = payload.get("type")
+    event_data = payload.get("data", {})
+
+    # Log every event received - useful for debugging and auditing
+    webhook_events.insert_one({
+        "type": event_type,
+        "data": event_data,
+        "received_at": datetime.datetime.utcnow(),
+    })
+
+    if event_type == "order.created":
+        order_id = event_data.get("object_id") or event_data.get("id")
+        print(f"[webhook] Booking confirmed: order {order_id}")
+        # TODO: mark this order as confirmed in your own bookings collection
+
+    elif event_type == "order.airline_initiated_change_detected":
+        order_id = event_data.get("object_id") or event_data.get("id")
+        print(f"[webhook] Airline changed the schedule for order {order_id}")
+        # TODO: notify the customer (email/SMS) that their flight changed
+
+    # Always return 200 quickly - Duffel retries if it doesn't get a fast 2xx response
+    return {"success": True}
