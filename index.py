@@ -14,6 +14,11 @@ Running in TEST MODE - no real money or real bookings involved.
 
 Requires MongoDB running locally (or a MONGODB_URI pointing to one) - conversation
 history is stored in the "traveling" database, "conversations" collection.
+Confirmed bookings are stored in the "bookings" collection (Section 4e extension
+below), and once a booking is confirmed, that session's conversation history is
+archived into "conversation_archive" and then reset - so the next chat message
+starts Claude on a clean slate instead of dragging along the whole completed
+booking flow as context.
 
 IMPORTANT - Duffel API access:
     This version talks to the Duffel REST API directly over HTTP (using the
@@ -147,8 +152,11 @@ async def all_exceptions_handler(request: Request, exc: Exception):
 #   2. Each browser/user gets its own session_id cookie -> conversations
 #      from different people can NEVER get mixed up with each other
 #
-# Database: "traveling", Collection: "conversations"
-# Each document looks like: {"session_id": "...", "history": [...], "updated_at": ...}
+# Database: "traveling", Collections:
+#   - "conversations"         {"session_id": ..., "history": [...], "updated_at": ...}
+#   - "conversation_archive"  a copy of a session's history, saved right before
+#                             it gets reset (see archive_and_reset_conversation)
+#   - "bookings"              one document per confirmed booking (see below)
 # ---------------------------------------------------------------------------
 
 MONGO_URI = os.getenv("MONGODB_URI")
@@ -156,11 +164,19 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["traveling"]
 conversations = db["conversations"]
 webhook_events = db["webhook_events"]  # log of every Duffel webhook event received
+conversation_archive = db["conversation_archive"]  # snapshots of history right before a reset
+bookings = db["bookings"]  # every confirmed booking, keyed by traveler email
 
 
 def init_db():
     """Ensures session_id is indexed and unique, for fast lookups and no duplicates."""
     conversations.create_index("session_id", unique=True)
+    conversation_archive.create_index("session_id")
+    # Not unique - the same email can (and should be able to) book more than once.
+    # This index is what lets us quickly answer "how many times has this exact
+    # traveler booked with us before?" without scanning the whole collection.
+    bookings.create_index("email")
+    bookings.create_index("order_id", unique=True)
 
 
 def load_history(session_id: str) -> list:
@@ -187,6 +203,37 @@ def get_session_id(request: Request, response: Response) -> str:
         session_id = str(uuid.uuid4())
         response.set_cookie("session_id", session_id, httponly=True, samesite="lax")
     return session_id
+
+
+def count_bookings_for_email(email: str) -> int:
+    """How many confirmed bookings this exact traveler (by email) already has."""
+    return bookings.count_documents({"email": email})
+
+
+def archive_and_reset_conversation(session_id: str):
+    """
+    Called right after a booking is confirmed.
+
+    Whatever conversation happened before this point (whether the traveler
+    used the chat, the manual search-bar form, or a mix of both - both paths
+    funnel through the same /api/book endpoint, so this behaves identically
+    either way) gets snapshotted into conversation_archive for the record,
+    and the *active* history for this session is reset to empty.
+
+    That way the next message this session sends to /api/chat starts Claude
+    on a fresh conversation instead of replaying the whole completed booking
+    flow as context. Python (via the bookings collection / count_bookings_for_email)
+    is what keeps track of how many times this traveler has booked - Claude
+    itself doesn't need to carry that across chats.
+    """
+    history = load_history(session_id)
+    if history:
+        conversation_archive.insert_one({
+            "session_id": session_id,
+            "history": history,
+            "archived_at": datetime.datetime.utcnow(),
+        })
+    save_history(session_id, [])
 
 
 init_db()
@@ -353,6 +400,12 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
     Conversation history is loaded from and saved to MongoDB, keyed by a
     session_id cookie - so it survives page reloads/server restarts, and two
     different users' conversations can never mix up with each other.
+
+    Note: right after a booking is confirmed via /api/book, this session's
+    stored history gets archived and reset to empty (see
+    archive_and_reset_conversation) - so if the traveler chats again after
+    booking, they start a brand new conversation with Claude instead of the
+    whole finished booking flow being replayed as context.
     """
     session_id = get_session_id(request, response)
     stored_history = load_history(session_id)
@@ -431,10 +484,37 @@ def api_chat(req: ChatRequest, request: Request, response: Response):
 
 
 @app.post("/api/book")
-def api_book(req: BookRequest):
-    """Called when the traveler submits the passenger form to confirm booking"""
+def api_book(req: BookRequest, request: Request, response: Response):
+    """
+    Called when the traveler submits the passenger form to confirm booking -
+    whether they got to this point via the chat conversation or straight from
+    the manual search-bar form. Both paths land here the same way, so
+    everything below applies identically no matter which one was used.
+    """
+    session_id = get_session_id(request, response)
     try:
         order = book_flight(req.offer_id, req.passenger.model_dump())
+
+        # --- Persist the booking itself (Section 4e extension) ---
+        # How many bookings this exact email already had BEFORE this one -
+        # this is how Python (not Claude) knows this traveler is a repeat
+        # customer if/when they come back later, even in a brand new session.
+        prior_bookings_for_email = count_bookings_for_email(req.passenger.email)
+        bookings.insert_one({
+            "session_id": session_id,
+            "email": req.passenger.email,
+            "order_id": order["id"],
+            "pnr": order["booking_reference"],
+            "offer_id": req.offer_id,
+            "passenger": req.passenger.model_dump(),
+            "total_paid": f"{order['total_amount']} {order['total_currency']}",
+            "booking_number_for_email": prior_bookings_for_email + 1,
+            "booked_at": datetime.datetime.utcnow(),
+        })
+
+        # --- Archive this session's chat history, then start a clean slate ---
+        archive_and_reset_conversation(session_id)
+
         return {
             "success": True,
             "pnr": order["booking_reference"],
