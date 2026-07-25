@@ -812,8 +812,11 @@
     <div class="quick-form" id="searchForm">
       <input id="origin" placeholder="Origin (e.g. KHI)" maxlength="3" style="text-transform:uppercase">
       <input id="destination" placeholder="Destination (e.g. IST)" maxlength="3" style="text-transform:uppercase">
-      <input id="date" type="date">
-      <input id="passengers" type="number" min="1" value="1">
+      <input id="date" type="date" class="full-row">
+      <div class="field-label">Adults</div>
+      <div class="field-label">Children</div>
+      <input id="adults" type="number" min="1" value="1">
+      <input id="children" type="number" min="0" value="0">
       <button class="submit-btn full-row" onclick="runSearch()">Search flights</button>
     </div>
   </div>
@@ -865,6 +868,24 @@ function escapeHtml(str) {
 
 let conversationHistory = [];  // full chat record with Claude (Anthropic format)
 
+// The chat endpoint doesn't send back adults/children directly - but Claude's
+// own tool call (stored in history) has them. Walk history backwards to find
+// the most recent search_flights call and pull its counts out.
+function extractPassengerCounts(history) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    const toolUse = msg.content.find(b => b.type === 'tool_use' && b.name === 'search_flights');
+    if (toolUse) {
+      return {
+        adults: toolUse.input?.adults ?? 1,
+        children: toolUse.input?.children ?? 0,
+      };
+    }
+  }
+  return { adults: 1, children: 0 };
+}
+
 // Safe fetch wrapper — never crashes even if the server returns HTML/an error page
 // instead of JSON (this is what caused the earlier "Unexpected token '<'" error).
 async function safeFetchJson(url, options) {
@@ -909,7 +930,9 @@ async function sendFreeText() {
 
     // If Claude called search_flights, offers will be included here
     if (data.offers && data.offers.length > 0) {
-      renderFlightCards(data.offers);
+      const counts = extractPassengerCounts(data.history);
+      const offersWithCounts = data.offers.map(o => ({ ...o, adults: counts.adults, children: counts.children }));
+      renderFlightCards(offersWithCounts);
     }
   } catch (err) {
     loading.remove();
@@ -944,21 +967,23 @@ async function runSearch() {
   const origin = document.getElementById('origin').value.trim().toUpperCase();
   const destination = document.getElementById('destination').value.trim().toUpperCase();
   const date = document.getElementById('date').value;
-  const passengers = parseInt(document.getElementById('passengers').value) || 1;
+  const adults = parseInt(document.getElementById('adults').value) || 1;
+  const children = parseInt(document.getElementById('children').value) || 0;
 
   if (!origin || !destination || !date) {
     addBotMessage('<span>Origin, destination, and date are all required.</span>');
     return;
   }
 
-  addUserMessage(`${origin} → ${destination}, ${date}, ${passengers} passenger(s)`);
+  const paxSummary = `${adults} adult${adults !== 1 ? 's' : ''}` + (children > 0 ? `, ${children} child${children !== 1 ? 'ren' : ''}` : '');
+  addUserMessage(`${origin} → ${destination}, ${date}, ${paxSummary}`);
   const loading = addBotMessage('<span class="spinner-card">Searching flights...</span>');
 
   try {
     const data = await safeFetchJson('/api/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ origin, destination, departure_date: date, passengers })
+      body: JSON.stringify({ origin, destination, departure_date: date, adults, children })
     });
     loading.remove();
 
@@ -980,6 +1005,7 @@ async function runSearch() {
     const ticketWrap = section.querySelector('#ticketWrap');
 
     data.offers.forEach((o, i) => {
+      const offerWithCounts = { ...o, adults, children };
       const card = document.createElement('div');
       card.className = 'flight-card' + (i === 0 ? ' recommended' : '');
       card.innerHTML = `
@@ -989,7 +1015,7 @@ async function runSearch() {
         </div>
         <div class="flight-info code">${escapeHtml(origin)} → ${escapeHtml(destination)} · ${escapeHtml(date)}</div>
       `;
-      card.onclick = () => selectOffer(o);
+      card.onclick = () => selectOffer(offerWithCounts);
       ticketWrap.appendChild(card);
     });
     chat.scrollTop = chat.scrollHeight;
