@@ -431,6 +431,12 @@ async def duffel_webhook(request: Request):
 
     # Constant-time comparison to avoid timing attacks
     if not hmac.compare_digest(expected_sig, received_sig):
+        # TEMPORARY DEBUG LOGGING - remove once the 401 issue is resolved
+        print(f"[webhook-debug] secret loaded: {bool(DUFFEL_WEBHOOK_SECRET)}, secret length: {len(DUFFEL_WEBHOOK_SECRET or '')}")
+        print(f"[webhook-debug] secret fingerprint: {(DUFFEL_WEBHOOK_SECRET or '')[:4]}...{(DUFFEL_WEBHOOK_SECRET or '')[-4:]}")
+        print(f"[webhook-debug] received signature header: {signature_header}")
+        print(f"[webhook-debug] expected: {expected_sig}")
+        print(f"[webhook-debug] received: {received_sig}")
         return JSONResponse(status_code=401, content={"success": False, "error": "Invalid signature"})
 
     # --- Signature verified - safe to process the event now ---
