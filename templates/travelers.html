@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Travel Assistant</title>
+<style>
+  :root {
+    --ink: #14213D;
+    --ink-soft: #3A4A6B;
+    --paper: #FBF9F4;
+    --card: #FFFFFF;
+    --amber: #E8A33D;
+    --amber-dark: #B87A1E;
+    --line: #DDD6C7;
+    --success: #2F7A52;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .app {
+    width: 100%;
+    max-width: 560px;
+    background: var(--card);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(20,33,61,0.08), 0 8px 24px rgba(20,33,61,0.06);
+  }
+  .header {
+    background: var(--ink);
+    color: var(--paper);
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--amber);
+  }
+  .header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+  .header p {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: #A9B4CC;
+  }
+  .chat {
+    padding: 20px 20px 8px;
+    max-height: 480px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .msg {
+    max-width: 82%;
+    padding: 11px 14px;
+    border-radius: 14px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .msg.bot {
+    background: #F0EDE3;
+    color: var(--ink);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+  }
+  .msg.user {
+    background: var(--ink);
+    color: var(--paper);
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+  }
+  .ticket {
+    align-self: flex-start;
+    width: 100%;
+    max-width: 92%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .flight-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .flight-card:hover { border-color: var(--amber); }
+  .flight-card::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--amber);
+    border-radius: 10px 0 0 10px;
+  }
+  .flight-info .airline {
+    font-weight: 600;
+    font-size: 13.5px;
+  }
+  .flight-info .code {
+    font-family: "Courier New", monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+    letter-spacing: 0.03em;
+  }
+  .flight-price {
+    font-family: "Courier New", monospace;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--amber-dark);
+  }
+  .quick-form, .passenger-form {
+    background: #F7F4EC;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-self: flex-start;
+    width: 100%;
+  }
+  .quick-form input, .passenger-form input {
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--card);
+  }
+  .quick-form input:focus, .passenger-form input:focus {
+    outline: none;
+    border-color: var(--amber);
+  }
+  .full-row { grid-column: 1 / -1; }
+  .submit-btn {
+    grid-column: 1 / -1;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 2px;
+  }
+  .submit-btn:hover { background: #253256; }
+  .submit-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .pnr-card {
+    align-self: flex-start;
+    width: 100%;
+    max-width: 92%;
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 12px;
+    padding: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .pnr-card::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; left: 68%;
+    width: 0;
+    border-left: 2px dashed rgba(251,249,244,0.25);
+  }
+  .pnr-label {
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: #A9B4CC;
+    text-transform: uppercase;
+  }
+  .pnr-code {
+    font-family: "Courier New", monospace;
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--amber);
+    letter-spacing: 0.08em;
+    margin: 4px 0 10px;
+  }
+  .pnr-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #C7CEE0;
+    margin-top: 4px;
+  }
+  .composer {
+    display: flex;
+    gap: 8px;
+    padding: 14px 20px 20px;
+    border-top: 1px solid var(--line);
+  }
+  .composer input {
+    flex: 1;
+    padding: 11px 14px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  .composer input:focus { outline: none; border-color: var(--amber); }
+  .composer button {
+    background: var(--amber);
+    border: none;
+    color: var(--ink);
+    font-weight: 700;
+    padding: 0 18px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .error-msg { color: #B23B3B; background: #FBEAEA; }
+  .spinner {
+    align-self: flex-start;
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="header">
+    <div class="dot"></div>
+    <div>
+      <h1>AI Travel Assistant</h1>
+      <p>Live search &middot; test mode</p>
+    </div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="msg bot">
+      Hi! Where would you like to go? Type it below, e.g.
+      "I want to go from Lahore to Islamabad" — or use the form.
+    </div>
+    <div class="quick-form" id="searchForm">
+      <input id="origin" placeholder="Origin (e.g. KHI)" maxlength="3" style="text-transform:uppercase">
+      <input id="destination" placeholder="Destination (e.g. IST)" maxlength="3" style="text-transform:uppercase">
+      <input id="date" type="date">
+      <input id="passengers" type="number" min="1" value="1">
+      <button class="submit-btn full-row" onclick="runSearch()">Search flights</button>
+    </div>
+  </div>
+
+  <div class="composer">
+    <input id="freeText" placeholder="e.g. I want to go from Lahore to Islamabad, 15 August" onkeydown="if(event.key==='Enter') sendFreeText()">
+    <button onclick="sendFreeText()">Send</button>
+  </div>
+</div>
+
+<script>
+const chat = document.getElementById('chat');
+
+function addBotMessage(html) {
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = html;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function addUserMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'msg user';
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+let conversationHistory = [];  // full chat record with Claude (Anthropic format)
+
+// Safe fetch wrapper — never crashes even if the server returns HTML/an error page
+// instead of JSON (this is what caused the earlier "Unexpected token '<'" error).
+async function safeFetchJson(url, options) {
+  const res = await fetch(url, options);
+  const raw = await res.text();
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`Server returned an unexpected response (status ${res.status}). Check the backend logs.`);
+  }
+  if (!res.ok && !('success' in data)) {
+    throw new Error(data.detail || `Request failed (status ${res.status})`);
+  }
+  return data;
+}
+
+async function sendFreeText() {
+  const input = document.getElementById('freeText');
+  const text = input.value.trim();
+  if (!text) return;
+  addUserMessage(text);
+  input.value = '';
+
+  const loading = addBotMessage('<span class="spinner">Thinking...</span>');
+
+  try {
+    const data = await safeFetchJson('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, history: conversationHistory })
+    });
+    loading.remove();
+
+    if (!data.success) {
+      addBotMessage(`<span class="error-msg">${data.error}</span>`);
+      return;
+    }
+
+    conversationHistory = data.history;  // keep history for the next turn
+    addBotMessage(data.reply);
+
+    // If Claude called search_flights, offers will be included here
+    if (data.offers && data.offers.length > 0) {
+      renderFlightCards(data.offers);
+    }
+  } catch (err) {
+    loading.remove();
+    addBotMessage(`<span class="error-msg">Something went wrong: ${err.message}</span>`);
+  }
+}
+
+function renderFlightCards(offers) {
+  const ticketWrap = document.createElement('div');
+  ticketWrap.className = 'ticket';
+  offers.forEach(o => {
+    const card = document.createElement('div');
+    card.className = 'flight-card';
+    card.innerHTML = `
+      <div class="flight-info">
+        <div class="airline">${o.airline}</div>
+        <div class="code">offer: ${o.offer_id.slice(0, 10)}...</div>
+      </div>
+      <div class="flight-price">${o.price} ${o.currency}</div>
+    `;
+    card.onclick = () => selectOffer(o);
+    ticketWrap.appendChild(card);
+  });
+  chat.appendChild(ticketWrap);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function runSearch() {
+  const origin = document.getElementById('origin').value.trim().toUpperCase();
+  const destination = document.getElementById('destination').value.trim().toUpperCase();
+  const date = document.getElementById('date').value;
+  const passengers = parseInt(document.getElementById('passengers').value) || 1;
+
+  if (!origin || !destination || !date) {
+    addBotMessage('<span>Origin, destination, and date are all required.</span>');
+    return;
+  }
+
+  addUserMessage(`${origin} → ${destination}, ${date}, ${passengers} passenger(s)`);
+  const loading = addBotMessage('<span class="spinner">Searching flights...</span>');
+
+  try {
+    const data = await safeFetchJson('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ origin, destination, departure_date: date, passengers })
+    });
+    loading.remove();
+
+    if (!data.success) {
+      addBotMessage(`<span class="error-msg">Search failed: ${data.error}</span>`);
+      return;
+    }
+    if (data.offers.length === 0) {
+      addBotMessage('No flights found for this route in test data. Try a different route.');
+      return;
+    }
+
+    addBotMessage(`Found ${data.offers.length} options, sorted by price:`);
+
+    const ticketWrap = document.createElement('div');
+    ticketWrap.className = 'ticket';
+    data.offers.forEach(o => {
+      const card = document.createElement('div');
+      card.className = 'flight-card';
+      card.innerHTML = `
+        <div class="flight-info">
+          <div class="airline">${o.airline}</div>
+          <div class="code">${origin} → ${destination} · ${date}</div>
+        </div>
+        <div class="flight-price">${o.price} ${o.currency}</div>
+      `;
+      card.onclick = () => selectOffer(o);
+      ticketWrap.appendChild(card);
+    });
+    chat.appendChild(ticketWrap);
+    chat.scrollTop = chat.scrollHeight;
+  } catch (err) {
+    loading.remove();
+    addBotMessage(`<span class="error-msg">Something went wrong: ${err.message}</span>`);
+  }
+}
+
+function selectOffer(offer) {
+  addUserMessage(`Selected ${offer.airline} — ${offer.price} ${offer.currency}`);
+  addBotMessage('Please fill in passenger details to confirm the booking:');
+
+  const form = document.createElement('div');
+  form.className = 'passenger-form';
+  form.innerHTML = `
+    <input id="p_given" placeholder="First name">
+    <input id="p_family" placeholder="Last name">
+    <input id="p_email" placeholder="Email" class="full-row">
+    <input id="p_phone" placeholder="+92...">
+    <input id="p_dob" type="date" placeholder="Date of birth">
+    <button class="submit-btn full-row" onclick='confirmBooking(${JSON.stringify(offer.offer_id)}, this)'>Confirm &amp; pay (test)</button>
+  `;
+  chat.appendChild(form);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function confirmBooking(offerId, btn) {
+  const passenger = {
+    given_name: document.getElementById('p_given').value,
+    family_name: document.getElementById('p_family').value,
+    email: document.getElementById('p_email').value,
+    phone_number: document.getElementById('p_phone').value,
+    born_on: document.getElementById('p_dob').value,
+  };
+  btn.disabled = true;
+  btn.textContent = 'Booking...';
+
+  try {
+    const data = await safeFetchJson('/api/book', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offer_id: offerId, passenger })
+    });
+
+    if (!data.success) {
+      addBotMessage(`<span class="error-msg">Booking failed: ${data.error}</span>`);
+      btn.disabled = false;
+      btn.textContent = 'Confirm & pay (test)';
+      return;
+    }
+
+    const pnr = document.createElement('div');
+    pnr.className = 'pnr-card';
+    pnr.innerHTML = `
+      <div class="pnr-label">Booking confirmed</div>
+      <div class="pnr-code">${data.pnr}</div>
+      <div class="pnr-row"><span>Order ID</span><span>${data.order_id}</span></div>
+      <div class="pnr-row"><span>Total paid</span><span>${data.total_paid}</span></div>
+    `;
+    chat.appendChild(pnr);
+    chat.scrollTop = chat.scrollHeight;
+  } catch (err) {
+    addBotMessage(`<span class="error-msg">Something went wrong: ${err.message}</span>`);
+    btn.disabled = false;
+    btn.textContent = 'Confirm & pay (test)';
+  }
+}
+</script>
+
+</body>
+</html>
