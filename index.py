@@ -409,7 +409,7 @@ async def duffel_webhook(request: Request):
     slightly and the signature check would fail.
     """
     raw_body = await request.body()
-    signature_header = request.headers.get("Duffel-Signature", "")
+    signature_header = request.headers.get("X-Duffel-Signature", "")
 
     if not DUFFEL_WEBHOOK_SECRET:
         return JSONResponse(status_code=500, content={"success": False, "error": "Webhook secret not configured"})
