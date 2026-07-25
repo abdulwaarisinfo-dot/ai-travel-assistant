@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 duffel_api==0.4.0
 anthropic==0.42.0
 pymongo==4.10.1
+setuptools==75.6.0
