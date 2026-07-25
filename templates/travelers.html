@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -47,7 +46,10 @@
   .splash {
     width: 100%;
     max-width: 420px;
-    min-height: 100vh;
+    height: 100vh;
+    max-height: 900px;
+    min-height: 700px;
+    margin: 0 auto;
     background: linear-gradient(165deg, #16223F 0%, #1E3A8A 45%, #2E5BD6 100%);
     color: #FFFFFF;
     display: flex;
@@ -254,12 +256,15 @@
   .app {
     width: 100%;
     max-width: 420px;
-    min-height: 100vh;
+    height: 100vh;
+    max-height: 900px;
+    min-height: 700px;
+    margin: 0 auto;
     background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 38%, var(--paper) 100%);
     display: flex;
     flex-direction: column;
     position: relative;
-    overflow-x: hidden;
+    overflow: hidden;
   }
   .app::before {
     content: "";
@@ -326,19 +331,6 @@
     letter-spacing: 0.16em;
     color: var(--blue-deep);
   }
-  .avatar-chip {
-    width: 38px; height: 38px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #FFD9A8, #FF9A76);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    font-weight: 700;
-    font-size: 14px;
-    box-shadow: var(--shadow);
-    flex-shrink: 0;
-  }
   .header h1 {
     font-family: 'Poppins', sans-serif;
     font-size: 22px;
@@ -367,6 +359,11 @@
     scroll-behavior: smooth;
     position: relative;
     z-index: 1;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .chat::-webkit-scrollbar {
+    display: none;
   }
 
   .assistant-card {
@@ -556,6 +553,77 @@
   }
   .submit-btn:hover { transform: translateY(-1px); }
   .submit-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+
+  .add-passenger-btn {
+    grid-column: 1 / -1;
+    background: var(--blue-soft);
+    color: var(--blue-deep);
+    border: 1.5px dashed var(--blue);
+    padding: 12px;
+    border-radius: 14px;
+    font-family: 'Poppins', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.12s;
+  }
+  .add-passenger-btn:hover { background: #DCE8FF; }
+  .add-passenger-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .passenger-block {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    margin-top: 4px;
+    position: relative;
+  }
+  .passenger-block:first-of-type {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+  }
+  .passenger-block-head {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .passenger-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--blue-deep);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 800;
+    margin-right: 6px;
+  }
+  .passenger-name-tag {
+    font-family: 'Poppins', sans-serif;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+  }
+  .remove-passenger-btn {
+    background: none;
+    border: none;
+    color: var(--danger);
+    font-size: 11.5px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 2px 6px;
+  }
 
   .field-error {
     grid-column: 1 / -1;
@@ -824,7 +892,6 @@
       <div class="brand">
         <div class="brand-icon"><span>&#9992;</span></div>
       </div>
-      <span class="avatar-chip">AI</span>
     </div>
     <h1>AI Travel <b>Assistant</b></h1>
     <p>Live search &middot; test mode</p>
@@ -842,7 +909,7 @@
       <input id="origin" placeholder="Origin (e.g. KHI)" maxlength="3" style="text-transform:uppercase">
       <input id="destination" placeholder="Destination (e.g. IST)" maxlength="3" style="text-transform:uppercase">
       <input id="date" type="date">
-      <input id="passengers" type="number" min="1" value="1">
+      <input id="passengers" type="number" min="1" placeholder="Passengers">
       <button class="submit-btn full-row" onclick="runSearch()">Search flights</button>
     </div>
   </div>
@@ -1018,7 +1085,7 @@ async function runSearch() {
         </div>
         <div class="flight-info code">${escapeHtml(origin)} → ${escapeHtml(destination)} · ${escapeHtml(date)}</div>
       `;
-      card.onclick = () => selectOffer(o);
+      card.onclick = () => selectOffer(o, passengers);
       ticketWrap.appendChild(card);
     });
     chat.scrollTop = chat.scrollHeight;
@@ -1031,18 +1098,20 @@ async function runSearch() {
 /* =========================================================================
    Booking journey after an offer is picked:
      1) selectOffer      -> quick account signup (calls real /api/signup)
-     2) showPassengerStep -> full passenger details (as required by /api/book)
+     2) showPassengerStep -> full passenger details for one or more travelers
+                              (as required by /api/book), with an
+                              "+ Add passenger" control
      3) showPaymentStep   -> mock card entry (visual only, for the demo) or
                               a one-tap "Pay with G Pay" shortcut
      4) confirmBooking     -> calls the real /api/book endpoint (unchanged)
    ========================================================================= */
 
-function selectOffer(offer) {
+function selectOffer(offer, passengerCount) {
   addUserMessage(`Selected ${offer.airline} — ${offer.price} ${offer.currency}`);
-  showSignupStep(offer);
+  showSignupStep(offer, passengerCount || 1);
 }
 
-function showSignupStep(offer) {
+function showSignupStep(offer, passengerCount) {
   addBotMessage('Great choice! First, let\'s create a quick account for your booking.');
 
   const form = document.createElement('div');
@@ -1058,10 +1127,10 @@ function showSignupStep(offer) {
   chat.appendChild(form);
   chat.scrollTop = chat.scrollHeight;
 
-  form.querySelector('#s_submit').onclick = () => submitSignup(offer, form);
+  form.querySelector('#s_submit').onclick = () => submitSignup(offer, form, passengerCount);
 }
 
-async function submitSignup(offer, form) {
+async function submitSignup(offer, form, passengerCount) {
   const email = form.querySelector('#s_email').value.trim();
   const phone = form.querySelector('#s_phone').value.trim();
   const password = form.querySelector('#s_password').value;
@@ -1096,7 +1165,7 @@ async function submitSignup(offer, form) {
     form.remove();
     addUserMessage(`Account: ${email}`);
     addBotMessage('Account created. Now let\'s get your traveler details.');
-    showPassengerStep(offer, { email, phone });
+    showPassengerStep(offer, { email, phone }, passengerCount);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
@@ -1105,53 +1174,114 @@ async function submitSignup(offer, form) {
   }
 }
 
-function showPassengerStep(offer, account) {
+function passengerBlockHtml(index, account) {
+  const isFirst = index === 0;
+  return `
+    <div class="passenger-block" data-passenger-index="${index}">
+      <div class="passenger-block-head">
+        <div class="passenger-name-tag"><span class="passenger-mark">${index + 1}</span>Passenger ${index + 1}</div>
+        ${isFirst ? '' : '<button type="button" class="remove-passenger-btn" data-remove="' + index + '">Remove</button>'}
+      </div>
+      <select class="p_title">
+        <option value="mr">Mr</option>
+        <option value="mrs">Mrs</option>
+        <option value="ms">Ms</option>
+      </select>
+      <select class="p_gender">
+        <option value="m">Male</option>
+        <option value="f">Female</option>
+      </select>
+      <input class="p_given" placeholder="First name">
+      <input class="p_family" placeholder="Last name">
+      <input class="p_email full-row" placeholder="Email" value="${isFirst ? escapeHtml(account?.email || '') : ''}">
+      <input class="p_phone" placeholder="+92..." value="${isFirst ? escapeHtml(account?.phone || '') : ''}">
+      <div class="field-label">Date of birth</div>
+      <input class="p_dob full-row" type="date">
+    </div>
+  `;
+}
+
+function showPassengerStep(offer, account, passengerCount) {
+  const total = Math.max(1, passengerCount || 1);
+
   const form = document.createElement('div');
   form.className = 'step-form';
   form.innerHTML = `
     <div class="form-title">Traveler details</div>
-    <select id="p_title">
-      <option value="mr">Mr</option>
-      <option value="mrs">Mrs</option>
-      <option value="ms">Ms</option>
-    </select>
-    <select id="p_gender">
-      <option value="m">Male</option>
-      <option value="f">Female</option>
-    </select>
-    <input id="p_given" placeholder="First name">
-    <input id="p_family" placeholder="Last name">
-    <input id="p_email" placeholder="Email" class="full-row" value="${escapeHtml(account?.email || '')}">
-    <input id="p_phone" placeholder="+92..." value="${escapeHtml(account?.phone || '')}">
-    <div class="field-label">Date of birth</div>
-    <input id="p_dob" type="date" class="full-row">
+    <div id="passengerList" class="full-row" style="display:contents;">
+      ${passengerBlockHtml(0, account)}
+    </div>
+    <button type="button" class="add-passenger-btn" id="p_add">+ Add passenger</button>
     <div class="field-error full-row" id="p_error" style="display:none;"></div>
     <button class="submit-btn full-row" id="p_submit">Continue to payment</button>
   `;
   chat.appendChild(form);
   chat.scrollTop = chat.scrollHeight;
 
-  form.querySelector('#p_submit').onclick = () => {
-    const passenger = {
-      title: form.querySelector('#p_title').value,
-      gender: form.querySelector('#p_gender').value,
-      given_name: form.querySelector('#p_given').value.trim(),
-      family_name: form.querySelector('#p_family').value.trim(),
-      email: form.querySelector('#p_email').value.trim(),
-      phone_number: form.querySelector('#p_phone').value.trim(),
-      born_on: form.querySelector('#p_dob').value,
-    };
-    const errorBox = form.querySelector('#p_error');
-    if (!passenger.given_name || !passenger.family_name || !passenger.email ||
-        !passenger.phone_number || !passenger.born_on) {
-      errorBox.textContent = 'Please fill in all traveler details, including date of birth.';
-      errorBox.style.display = 'block';
-      return;
+  const passengerList = form.querySelector('#passengerList');
+  const addBtn = form.querySelector('#p_add');
+  let count = 1;
+
+  function refreshAddButton() {
+    if (count >= total) {
+      addBtn.disabled = true;
+      addBtn.textContent = `All ${total} passenger(s) added`;
+    } else {
+      addBtn.disabled = false;
+      addBtn.textContent = `+ Add passenger (${count}/${total})`;
     }
+  }
+  refreshAddButton();
+
+  addBtn.onclick = () => {
+    if (count >= total) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = passengerBlockHtml(count, account);
+    passengerList.appendChild(wrap.firstElementChild);
+    count++;
+    refreshAddButton();
+    chat.scrollTop = chat.scrollHeight;
+  };
+
+  passengerList.addEventListener('click', (e) => {
+    if (e.target.matches('[data-remove]')) {
+      const idx = e.target.getAttribute('data-remove');
+      const block = passengerList.querySelector(`[data-passenger-index="${idx}"]`);
+      if (block) block.remove();
+      count--;
+      refreshAddButton();
+    }
+  });
+
+  form.querySelector('#p_submit').onclick = () => {
+    const blocks = passengerList.querySelectorAll('.passenger-block');
+    const passengers = [];
+    const errorBox = form.querySelector('#p_error');
+
+    for (const block of blocks) {
+      const passenger = {
+        title: block.querySelector('.p_title').value,
+        gender: block.querySelector('.p_gender').value,
+        given_name: block.querySelector('.p_given').value.trim(),
+        family_name: block.querySelector('.p_family').value.trim(),
+        email: block.querySelector('.p_email').value.trim(),
+        phone_number: block.querySelector('.p_phone').value.trim(),
+        born_on: block.querySelector('.p_dob').value,
+      };
+      if (!passenger.given_name || !passenger.family_name || !passenger.email ||
+          !passenger.phone_number || !passenger.born_on) {
+        errorBox.textContent = 'Please fill in all traveler details for every passenger, including date of birth.';
+        errorBox.style.display = 'block';
+        return;
+      }
+      passengers.push(passenger);
+    }
+
     errorBox.style.display = 'none';
     form.remove();
-    addUserMessage(`${passenger.given_name} ${passenger.family_name} · DOB ${passenger.born_on}`);
-    showPaymentStep(offer, passenger);
+    const names = passengers.map(p => `${p.given_name} ${p.family_name}`).join(', ');
+    addUserMessage(`${passengers.length} passenger(s): ${names}`);
+    showPaymentStep(offer, passengers);
   };
 }
 
@@ -1166,7 +1296,7 @@ function detectBrand(digits) {
   return null;
 }
 
-function showPaymentStep(offer, passenger) {
+function showPaymentStep(offer, passengers) {
   addBotMessage(`Last step — enter payment details to pay ${offer.price} ${offer.currency} (test mode, no real charge).`);
 
   const form = document.createElement('div');
@@ -1253,24 +1383,26 @@ function showPaymentStep(offer, passenger) {
     errorBox.style.display = 'none';
     form.remove();
     addUserMessage(`Paying by card •••• ${digits.slice(-4)}`);
-    confirmBooking(offer, passenger, null);
+    confirmBooking(offer, passengers);
   };
 
   form.querySelector('#gpay_btn').onclick = () => {
     form.remove();
     addUserMessage('Paying with G Pay');
-    confirmBooking(offer, passenger, null);
+    confirmBooking(offer, passengers);
   };
 }
 
-async function confirmBooking(offer, passenger, btn) {
+async function confirmBooking(offer, passengers) {
   const loading = addBotMessage('<span class="spinner-card">Confirming your booking...</span>');
 
   try {
     const data = await safeFetchJson('/api/book', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ offer_id: offer.offer_id, passenger })
+      // Kept backward compatible: `passenger` carries the first traveler,
+      // `passengers` carries the full list for multi-passenger bookings.
+      body: JSON.stringify({ offer_id: offer.offer_id, passenger: passengers[0], passengers })
     });
     loading.remove();
 
