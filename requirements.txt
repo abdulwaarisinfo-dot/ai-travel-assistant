@@ -9,3 +9,4 @@ pymongo==4.10.1
 setuptools==75.6.0
 bcrypt==4.2.0
 itsdangerous==2.2.0
+ 
