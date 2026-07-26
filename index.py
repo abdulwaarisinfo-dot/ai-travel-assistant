@@ -388,6 +388,11 @@ class PassengerDetails(BaseModel):
 class BookRequest(BaseModel):
     offer_id: str
     passenger: PassengerDetails
+    # Full traveler list for multi-passenger bookings. The frontend always
+    # sends this alongside `passenger` (which is just passengers[0], kept
+    # for backward compatibility). If it's ever missing/empty for some
+    # caller, we fall back to booking just the one `passenger` above.
+    passengers: List[PassengerDetails] = []
 
 
 class ChatRequest(BaseModel):
@@ -449,12 +454,18 @@ def search_flights(origin: str, destination: str, departure_date: str, passenger
 # STEP 2 - Create the Booking (Order)
 # ---------------------------------------------------------------------------
 
-def book_flight(offer_id: str, passenger_details: dict):
+def book_flight(offer_id: str, passengers_details: list):
     """
     Uses payment type "balance" - meaning it's deducted automatically from the
     agency's Duffel wallet (which was topped up earlier in test mode).
+
+    `passengers_details` is a list with one dict per traveler - it must have
+    exactly as many entries as the offer itself has passenger slots (e.g. a
+    2-passenger search produces an offer with 2 passenger slots, so this
+    needs exactly 2 entries). Duffel rejects the order otherwise with
+    "Field 'passengers' should have N item(s)".
     """
-    # Fetch the offer first, to get its passenger id, current price, and currency
+    # Fetch the offer first, to get its passenger ids, current price, and currency
     resp = requests.get(
         f"{DUFFEL_API_BASE}/air/offers/{offer_id}",
         headers=DUFFEL_HEADERS,
@@ -465,6 +476,19 @@ def book_flight(offer_id: str, passenger_details: dict):
         raise Exception(duffel_error_message(resp))
     offer = resp.json()["data"]
 
+    offer_passengers = offer["passengers"]
+    if len(passengers_details) != len(offer_passengers):
+        raise Exception(
+            f"This flight was searched for {len(offer_passengers)} passenger(s), "
+            f"but {len(passengers_details)} traveler(s) were submitted. "
+            f"Please provide details for all {len(offer_passengers)} passenger(s)."
+        )
+
+    order_passengers = [
+        {"id": offer_passengers[i]["id"], **passengers_details[i]}
+        for i in range(len(offer_passengers))
+    ]
+
     order_body = {
         "data": {
             "selected_offers": [offer_id],
@@ -473,10 +497,7 @@ def book_flight(offer_id: str, passenger_details: dict):
                 "currency": offer["total_currency"],
                 "amount": offer["total_amount"],
             }],
-            "passengers": [{
-                "id": offer["passengers"][0]["id"],
-                **passenger_details,
-            }],
+            "passengers": order_passengers,
         }
     }
 
@@ -768,8 +789,11 @@ def api_book(req: BookRequest, request: Request, response: Response):
         })
 
     session_id = get_session_id(request, response)
+    # Prefer the full `passengers` list (multi-passenger bookings); fall back
+    # to the single `passenger` field only if the caller didn't send a list.
+    passenger_list = [p.model_dump() for p in req.passengers] if req.passengers else [req.passenger.model_dump()]
     try:
-        order = book_flight(req.offer_id, req.passenger.model_dump())
+        order = book_flight(req.offer_id, passenger_list)
 
         # --- Persist the booking itself (Section 4e extension) ---
         # How many bookings this exact logged-in account already had BEFORE
@@ -786,6 +810,7 @@ def api_book(req: BookRequest, request: Request, response: Response):
             "pnr": order["booking_reference"],
             "offer_id": req.offer_id,
             "passenger": req.passenger.model_dump(),
+            "passengers": passenger_list,
             "total_paid": f"{order['total_amount']} {order['total_currency']}",
             "booking_number_for_account": prior_bookings_for_account + 1,
             "booked_at": datetime.datetime.utcnow(),
