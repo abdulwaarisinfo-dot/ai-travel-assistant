@@ -1312,8 +1312,9 @@ async function resumePendingBookingAfterGoogleLogin() {
   }
 }
 
-function passengerBlockHtml(index, account) {
+function passengerBlockHtml(index, prefill) {
   const isFirst = index === 0;
+  const p = prefill || {};
   return `
     <div class="passenger-block" data-passenger-index="${index}">
       <div class="passenger-block-head">
@@ -1321,33 +1322,41 @@ function passengerBlockHtml(index, account) {
         ${isFirst ? '' : '<button type="button" class="remove-passenger-btn" data-remove="' + index + '">Remove</button>'}
       </div>
       <select class="p_title">
-        <option value="mr">Mr</option>
-        <option value="mrs">Mrs</option>
-        <option value="ms">Ms</option>
+        <option value="mr" ${p.title === 'mr' ? 'selected' : ''}>Mr</option>
+        <option value="mrs" ${p.title === 'mrs' ? 'selected' : ''}>Mrs</option>
+        <option value="ms" ${p.title === 'ms' ? 'selected' : ''}>Ms</option>
       </select>
       <select class="p_gender">
-        <option value="m">Male</option>
-        <option value="f">Female</option>
+        <option value="m" ${p.gender === 'm' ? 'selected' : ''}>Male</option>
+        <option value="f" ${p.gender === 'f' ? 'selected' : ''}>Female</option>
       </select>
-      <input class="p_given" placeholder="First name">
-      <input class="p_family" placeholder="Last name">
-      <input class="p_email full-row" placeholder="Email" value="${isFirst ? escapeHtml(account?.email || '') : ''}">
-      <input class="p_phone" placeholder="+92..." value="${isFirst ? escapeHtml(account?.phone || '') : ''}">
+      <input class="p_given" placeholder="First name" value="${escapeHtml(p.given_name || '')}">
+      <input class="p_family" placeholder="Last name" value="${escapeHtml(p.family_name || '')}">
+      <input class="p_email full-row" placeholder="Email" value="${escapeHtml(p.email || (isFirst ? p.accountEmail : '') || '')}">
+      <input class="p_phone" placeholder="+92..." value="${escapeHtml(p.phone_number || (isFirst ? p.accountPhone : '') || '')}">
       <div class="field-label">Date of birth</div>
-      <input class="p_dob full-row" type="date">
+      <input class="p_dob full-row" type="date" value="${escapeHtml(p.born_on || '')}">
     </div>
   `;
 }
 
-function showPassengerStep(offer, account, passengerCount) {
-  const total = Math.max(1, passengerCount || 1);
+// `existingPassengers`: when re-showing this step after a failed booking, the
+// details the traveler already typed (name, email, phone, DOB, etc.) so they
+// don't have to retype everything - they just need to fix whatever caused
+// the failure (e.g. a date of birth that doesn't match the fare type).
+function showPassengerStep(offer, account, passengerCount, existingPassengers) {
+  const initial = existingPassengers && existingPassengers.length ? existingPassengers : null;
+  const total = Math.max(1, passengerCount || (initial ? initial.length : 1));
+  const firstPrefill = initial
+    ? initial[0]
+    : { accountEmail: account?.email, accountPhone: account?.phone };
 
   const form = document.createElement('div');
   form.className = 'step-form';
   form.innerHTML = `
     <div class="form-title">Traveler details</div>
     <div id="passengerList" class="full-row" style="display:contents;">
-      ${passengerBlockHtml(0, account)}
+      ${passengerBlockHtml(0, firstPrefill)}
     </div>
     <button type="button" class="add-passenger-btn" id="p_add">+ Add passenger</button>
     <div class="field-error full-row" id="p_error" style="display:none;"></div>
@@ -1359,6 +1368,17 @@ function showPassengerStep(offer, account, passengerCount) {
   const passengerList = form.querySelector('#passengerList');
   const addBtn = form.querySelector('#p_add');
   let count = 1;
+
+  // Re-add any extra passengers (beyond the first) that were already filled
+  // in before, so retrying after a failure doesn't lose that data either.
+  if (initial && initial.length > 1) {
+    for (let i = 1; i < initial.length; i++) {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = passengerBlockHtml(i, initial[i]);
+      passengerList.appendChild(wrap.firstElementChild);
+      count++;
+    }
+  }
 
   function refreshAddButton() {
     if (count >= total) {
@@ -1374,7 +1394,7 @@ function showPassengerStep(offer, account, passengerCount) {
   addBtn.onclick = () => {
     if (count >= total) return;
     const wrap = document.createElement('div');
-    wrap.innerHTML = passengerBlockHtml(count, account);
+    wrap.innerHTML = passengerBlockHtml(count);
     passengerList.appendChild(wrap.firstElementChild);
     count++;
     refreshAddButton();
@@ -1545,7 +1565,15 @@ async function confirmBooking(offer, passengers) {
     loading.remove();
 
     if (!data.success) {
+      const hint = /date of birth|born_on/i.test(data.error || '')
+        ? ' Please double-check each passenger\'s date of birth and try again.'
+        : ' Please review the traveler details below and try again.';
       addBotMessage(`<span class="error-card">Booking failed: ${escapeHtml(data.error)}</span>`);
+      addBotMessage(hint.trim());
+      // Bring the passenger form back, pre-filled with what was already
+      // typed, instead of leaving the traveler stuck with just an error and
+      // no way to correct it.
+      showPassengerStep(offer, null, passengers.length, passengers);
       return;
     }
 
@@ -1562,6 +1590,7 @@ async function confirmBooking(offer, passengers) {
   } catch (err) {
     loading.remove();
     addBotMessage(`<span class="error-card">Something went wrong: ${escapeHtml(err.message)}</span>`);
+    showPassengerStep(offer, null, passengers.length, passengers);
   }
 }
 </script>
