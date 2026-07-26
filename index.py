@@ -54,7 +54,7 @@ IMPORTANT - Auth model (Section 5):
     were skipped.
 
 Setup:
-    pip install requests python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo "passlib[bcrypt]" itsdangerous --break-system-packages
+    pip install requests python-dotenv fastapi uvicorn jinja2 python-multipart anthropic pymongo bcrypt itsdangerous --break-system-packages
 
 Put your keys in a .env file:
     DUFFEL_ACCESS_TOKEN=duffel_test_XXXXXXXXXXXX
@@ -92,7 +92,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-from passlib.context import CryptContext
+import bcrypt
 import anthropic
 from pymongo import MongoClient
 
@@ -112,8 +112,6 @@ templates = Jinja2Templates(directory="templates")  # travelers.html lives here
 # ---------------------------------------------------------------------------
 SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY", "dev-only-insecure-secret-change-me")
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax")
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -304,6 +302,20 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+def hash_password(password: str) -> str:
+    """bcrypt only looks at the first 72 bytes of a password - anything
+    longer is silently ignored, same as most real-world auth systems."""
+    return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8")[:72], password_hash.encode("utf-8"))
+    except ValueError:
+        # Malformed/legacy hash - treat as a failed login rather than a 500.
+        return False
+
+
 def get_user_by_email(email: str):
     return users.find_one({"email": normalize_email(email)})
 
@@ -312,7 +324,7 @@ def create_local_account(email: str, password: str):
     """Email + password signup. Password is hashed with bcrypt - never stored in plain text."""
     doc = {
         "email": normalize_email(email),
-        "password_hash": pwd_context.hash(password),
+        "password_hash": hash_password(password),
         "google_id": None,
         "name": None,
         "created_at": datetime.datetime.utcnow(),
@@ -645,7 +657,7 @@ def api_auth_signup(req: SignupRequest, request: Request):
 def api_auth_login(req: LoginRequest, request: Request):
     """Email + password login for accounts that were created with a password."""
     user = get_user_by_email(req.email)
-    if not user or not user.get("password_hash") or not pwd_context.verify(req.password, user["password_hash"]):
+    if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
         return {"success": False, "error": "Incorrect email or password."}
 
     request.session["user_email"] = user["email"]
