@@ -26,7 +26,14 @@
   * { box-sizing: border-box; }
   html, body {
     overflow-x: hidden;
+    overflow-y: hidden;
     width: 100%;
+    height: 100%;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  html::-webkit-scrollbar, body::-webkit-scrollbar {
+    display: none;
   }
   body {
     margin: 0;
@@ -633,6 +640,35 @@
     margin-top: -4px;
   }
 
+  /* ---------- Auth step (sign up / log in / Google) ---------- */
+  .auth-tabs {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 6px;
+    background: var(--paper);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 2px;
+  }
+  .auth-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    font-family: 'Poppins', sans-serif;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 9px;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .auth-tab.active {
+    background: var(--card);
+    color: var(--blue-deep);
+    box-shadow: 0 3px 10px rgba(46, 91, 214, 0.16);
+  }
+
   /* ---------- Payment step ---------- */
   .card-brands {
     grid-column: 1 / -1;
@@ -932,6 +968,15 @@ function enterApp() {
 document.getElementById('splashStart').addEventListener('click', enterApp);
 document.getElementById('splashSkip').addEventListener('click', enterApp);
 
+// After a real Google OAuth redirect brings the browser back here, resume
+// the booking that was in progress (see resumePendingBookingAfterGoogleLogin
+// further down, defined after the functions it depends on).
+window.addEventListener('load', () => {
+  if (typeof resumePendingBookingAfterGoogleLogin === 'function') {
+    resumePendingBookingAfterGoogleLogin();
+  }
+});
+
 const chat = document.getElementById('chat');
 
 // Bot replies render as an "assistant card": blue label + message body,
@@ -1097,7 +1142,10 @@ async function runSearch() {
 
 /* =========================================================================
    Booking journey after an offer is picked:
-     1) selectOffer      -> quick account signup (calls real /api/signup)
+     1) selectOffer       -> checks real login state (/api/auth/me); if not
+                              signed in yet, gates on a real auth step first
+                              (email+password+confirm, or "Continue with
+                              Google" - a real Google OAuth redirect)
      2) showPassengerStep -> full passenger details for one or more travelers
                               (as required by /api/book), with an
                               "+ Add passenger" control
@@ -1108,69 +1156,159 @@ async function runSearch() {
 
 function selectOffer(offer, passengerCount) {
   addUserMessage(`Selected ${offer.airline} — ${offer.price} ${offer.currency}`);
-  showSignupStep(offer, passengerCount || 1);
+  checkAuthAndProceed(offer, passengerCount || 1);
 }
 
-function showSignupStep(offer, passengerCount) {
-  addBotMessage('Great choice! First, let\'s create a quick account for your booking.');
+// Searching flights never required a login. The moment a flight is actually
+// picked, we check whether this browser already has a real logged-in
+// account (email/password OR Google). If yes, skip straight to passenger
+// details. If not, show the sign-up/sign-in gate below first.
+async function checkAuthAndProceed(offer, passengerCount) {
+  try {
+    const data = await safeFetchJson('/api/auth/me');
+    if (data.authenticated) {
+      showPassengerStep(offer, { email: data.email, phone: '' }, passengerCount);
+    } else {
+      showAuthStep(offer, passengerCount);
+    }
+  } catch (err) {
+    // If we can't even check auth status, fall back to showing the gate -
+    // /api/book itself refuses to book without a real session anyway.
+    showAuthStep(offer, passengerCount);
+  }
+}
+
+function showAuthStep(offer, passengerCount) {
+  addBotMessage('Please sign in to continue with your booking.');
 
   const form = document.createElement('div');
   form.className = 'step-form';
   form.innerHTML = `
-    <div class="form-title">Create your account</div>
-    <input id="s_email" type="email" class="full-row" placeholder="Email address">
-    <input id="s_phone" placeholder="Phone (+92...)">
-    <input id="s_password" type="password" placeholder="Password">
-    <div class="field-error full-row" id="s_error" style="display:none;"></div>
-    <button class="submit-btn full-row" id="s_submit">Create account &amp; continue</button>
+    <div class="form-title">Sign in to book</div>
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-tab="signup">Sign up</button>
+      <button type="button" class="auth-tab" data-tab="login">Log in</button>
+    </div>
+    <input id="a_email" type="email" class="full-row" placeholder="Email address">
+    <input id="a_password" type="password" class="full-row" placeholder="Password">
+    <input id="a_confirm" type="password" class="full-row" placeholder="Confirm password">
+    <div class="field-error full-row" id="a_error" style="display:none;"></div>
+    <button class="submit-btn full-row" id="a_submit">Sign up &amp; continue</button>
+    <div class="or-divider">OR</div>
+    <button type="button" class="gpay-btn" id="a_google">Continue with Google</button>
   `;
   chat.appendChild(form);
   chat.scrollTop = chat.scrollHeight;
 
-  form.querySelector('#s_submit').onclick = () => submitSignup(offer, form, passengerCount);
+  let mode = 'signup';
+  const tabs = form.querySelectorAll('.auth-tab');
+  const confirmInput = form.querySelector('#a_confirm');
+  const submitBtn = form.querySelector('#a_submit');
+  const errorBox = form.querySelector('#a_error');
+
+  tabs.forEach(tab => {
+    tab.onclick = () => {
+      mode = tab.getAttribute('data-tab');
+      tabs.forEach(t => t.classList.toggle('active', t === tab));
+      errorBox.style.display = 'none';
+      if (mode === 'login') {
+        // Logging into an existing account never needs a confirm-password
+        // field - that's only meaningful when a NEW password is being set.
+        confirmInput.style.display = 'none';
+        submitBtn.textContent = 'Log in & continue';
+      } else {
+        confirmInput.style.display = '';
+        submitBtn.textContent = 'Sign up & continue';
+      }
+    };
+  });
+
+  submitBtn.onclick = () => submitAuth(offer, passengerCount, form, () => mode);
+
+  // Real Google OAuth: full-page redirect into Google's own consent screen.
+  // We stash the in-progress booking so it can resume right where it left
+  // off once Google sends the browser back to this app.
+  form.querySelector('#a_google').onclick = () => {
+    sessionStorage.setItem('pendingBooking', JSON.stringify({ offer, passengerCount }));
+    window.location.href = '/api/auth/google/login';
+  };
 }
 
-async function submitSignup(offer, form, passengerCount) {
-  const email = form.querySelector('#s_email').value.trim();
-  const phone = form.querySelector('#s_phone').value.trim();
-  const password = form.querySelector('#s_password').value;
-  const errorBox = form.querySelector('#s_error');
+async function submitAuth(offer, passengerCount, form, getMode) {
+  const mode = getMode();
+  const email = form.querySelector('#a_email').value.trim();
+  const password = form.querySelector('#a_password').value;
+  const confirm = form.querySelector('#a_confirm').value;
+  const errorBox = form.querySelector('#a_error');
   errorBox.style.display = 'none';
 
-  if (!email || !phone || !password) {
-    errorBox.textContent = 'Please fill in email, phone, and password.';
+  if (!email || !password) {
+    errorBox.textContent = 'Please fill in email and password.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  // Confirm-password is only required when setting a brand new password
+  // (sign up). Logging in, or continuing with Google, never needs it.
+  if (mode === 'signup' && password !== confirm) {
+    errorBox.textContent = 'Password and confirm password do not match.';
     errorBox.style.display = 'block';
     return;
   }
 
-  const btn = form.querySelector('#s_submit');
+  const btn = form.querySelector('#a_submit');
   btn.disabled = true;
-  btn.textContent = 'Creating account...';
+  btn.textContent = mode === 'signup' ? 'Creating account...' : 'Logging in...';
 
   try {
-    const data = await safeFetchJson('/api/signup', {
+    const endpoint = mode === 'signup' ? '/api/auth/signup' : '/api/auth/login';
+    const body = mode === 'signup'
+      ? { email, password, confirm_password: confirm }
+      : { email, password };
+
+    const data = await safeFetchJson(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, phone_number: phone, password })
+      body: JSON.stringify(body)
     });
 
     if (!data.success) {
-      errorBox.textContent = data.error || 'Could not create account.';
+      errorBox.textContent = data.error || 'Something went wrong.';
       errorBox.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = 'Create account & continue';
+      btn.textContent = mode === 'signup' ? 'Sign up & continue' : 'Log in & continue';
       return;
     }
 
     form.remove();
-    addUserMessage(`Account: ${email}`);
-    addBotMessage('Account created. Now let\'s get your traveler details.');
-    showPassengerStep(offer, { email, phone }, passengerCount);
+    addUserMessage(`Signed in as ${data.email}`);
+    showPassengerStep(offer, { email: data.email, phone: '' }, passengerCount);
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
     btn.disabled = false;
-    btn.textContent = 'Create account & continue';
+    btn.textContent = mode === 'signup' ? 'Sign up & continue' : 'Log in & continue';
+  }
+}
+
+// If Google just redirected back here after a successful sign-in, pick the
+// booking back up exactly where it was left before the redirect.
+async function resumePendingBookingAfterGoogleLogin() {
+  const params = new URLSearchParams(window.location.search);
+  const pending = sessionStorage.getItem('pendingBooking');
+  if (params.get('auth') !== 'success' || !pending) return;
+
+  sessionStorage.removeItem('pendingBooking');
+  window.history.replaceState({}, '', window.location.pathname);
+
+  try {
+    const me = await safeFetchJson('/api/auth/me');
+    if (!me.authenticated) return;
+    const { offer, passengerCount } = JSON.parse(pending);
+    enterApp();
+    addBotMessage(`Welcome back! Signed in as ${me.email}.`);
+    showPassengerStep(offer, { email: me.email, phone: '' }, passengerCount);
+  } catch (err) {
+    addBotMessage(`<span class="error-card">Couldn't resume your booking after signing in: ${escapeHtml(err.message)}</span>`);
   }
 }
 
