@@ -878,6 +878,7 @@
   }
 
   .error-card { color: var(--danger); font-weight: 600; }
+  .hint-card { color: var(--blue-deep); font-weight: 600; }
   .spinner-card { color: var(--ink-soft); font-style: italic; font-weight: 600; }
 </style>
 </head>
@@ -1105,7 +1106,17 @@ async function runSearch() {
     loading.remove();
 
     if (!data.success) {
-      addBotMessage(`<span class="error-card">Search failed: ${escapeHtml(data.error)}</span>`);
+      // The backend now sends a friendly, actionable message when someone
+      // types a country instead of a specific city (e.g. "US" ->
+      // "looks like a country... try a city like New York (JFK)..."). Show
+      // that as a helpful tip rather than a scary red error - it's guidance,
+      // not really a failure.
+      const isGuidance = /isn't a valid|looks like a country/i.test(data.error || '');
+      if (isGuidance) {
+        addBotMessage(`<span class="hint-card">${escapeHtml(data.error)}</span>`);
+      } else {
+        addBotMessage(`<span class="error-card">Search failed: ${escapeHtml(data.error)}</span>`);
+      }
       return;
     }
     if (data.offers.length === 0) {
