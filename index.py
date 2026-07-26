@@ -592,9 +592,45 @@ def home(request: Request):
     return templates.TemplateResponse("travelers.html", {"request": request})
 
 
+def record_manual_search(session_id: str, origin: str, destination: str, departure_date: str,
+                          passengers: int, results: list, error: str = None):
+    """
+    The manual search-bar form (/api/search) never talks to Claude - it's a
+    direct Duffel lookup, which is what keeps it fast and free of Claude API
+    cost. But if the traveler then switches over to the chat, Claude should
+    still know what they already searched for instead of starting blind.
+
+    So we append a plain user/assistant turn describing that search directly
+    into this session's stored history in MongoDB - no Claude call involved,
+    just Python bookkeeping - so the NEXT real /api/chat request (which does
+    call Claude) already has this context as part of the conversation.
+    """
+    history = load_history(session_id)
+
+    user_turn = (
+        f"I searched flights from {origin} to {destination} on {departure_date} "
+        f"for {passengers} passenger(s) using the search form."
+    )
+
+    if error:
+        assistant_turn = f"(Search form) That search failed: {error}"
+    elif results:
+        options = "; ".join(f"{o['airline']} at {o['price']} {o['currency']}" for o in results)
+        assistant_turn = f"(Search form) Found {len(results)} option(s): {options}."
+    else:
+        assistant_turn = "(Search form) No flights were found for that route/date."
+
+    history = history + [
+        {"role": "user", "content": user_turn},
+        {"role": "assistant", "content": assistant_turn},
+    ]
+    save_history(session_id, history)
+
+
 @app.post("/api/search")
-def api_search(req: SearchRequest):
+def api_search(req: SearchRequest, request: Request, response: Response):
     """Called when the traveler searches using the manual form. No login required - browsing is open."""
+    session_id = get_session_id(request, response)
     try:
         offers = search_flights(req.origin, req.destination, req.departure_date, req.passengers)
         results = [
@@ -606,8 +642,10 @@ def api_search(req: SearchRequest):
             }
             for o in offers
         ]
+        record_manual_search(session_id, req.origin, req.destination, req.departure_date, req.passengers, results)
         return {"success": True, "offers": results}
     except Exception as e:
+        record_manual_search(session_id, req.origin, req.destination, req.departure_date, req.passengers, [], error=str(e))
         return {"success": False, "error": str(e)}
 
 
