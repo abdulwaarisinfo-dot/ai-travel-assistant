@@ -77,6 +77,7 @@ Run:
 """
 
 import os
+import re
 import uuid
 import json
 import hmac
@@ -147,6 +148,69 @@ def duffel_error_message(resp: requests.Response) -> str:
     return f"Duffel API error (status {resp.status_code}): {resp.text}"
 
 
+# A short lookup so we can point someone to a real, well-known city/IATA
+# code when they type a country instead ("US", "UK", "Pakistan", ...)
+# rather than just repeating Duffel's raw validation error. This is NOT
+# meant to be exhaustive - anything not in here still gets a clear, generic
+# tip instead of a confusing "invalid IATA code" message.
+COUNTRY_CITY_HINTS = {
+    "us": "New York (JFK), Los Angeles (LAX), or Miami (MIA)",
+    "usa": "New York (JFK), Los Angeles (LAX), or Miami (MIA)",
+    "united states": "New York (JFK), Los Angeles (LAX), or Miami (MIA)",
+    "uk": "London (LHR) or Manchester (MAN)",
+    "united kingdom": "London (LHR) or Manchester (MAN)",
+    "pk": "Karachi (KHI), Lahore (LHE), or Islamabad (ISB)",
+    "pakistan": "Karachi (KHI), Lahore (LHE), or Islamabad (ISB)",
+    "uae": "Dubai (DXB) or Abu Dhabi (AUH)",
+    "ae": "Dubai (DXB) or Abu Dhabi (AUH)",
+    "saudi arabia": "Jeddah (JED) or Riyadh (RUH)",
+    "sa": "Jeddah (JED) or Riyadh (RUH)",
+    "turkey": "Istanbul (IST)",
+    "tr": "Istanbul (IST)",
+    "india": "Delhi (DEL) or Mumbai (BOM)",
+    "in": "Delhi (DEL) or Mumbai (BOM)",
+    "china": "Beijing (PEK) or Shanghai (PVG)",
+    "cn": "Beijing (PEK) or Shanghai (PVG)",
+}
+
+
+def friendly_flight_input_error(raw_message: str, origin: str, destination: str) -> str:
+    """
+    Duffel rejects anything that isn't a real 3-letter IATA airport/city code
+    with a fairly technical message, e.g. "Field 'destination' is invalid.
+    Expected a valid IATA code." - which is exactly what happens when
+    someone types a country ("US") instead of a specific city.
+
+    This turns that into something a traveler can actually act on. It lives
+    right here in one place and is called from inside search_flights()
+    below, so BOTH /api/search (the manual form) and /api/chat (Claude's
+    search_flights tool) get the exact same friendly wording for the exact
+    same underlying problem - there's only one flight-search code path, so
+    there's nothing to keep in sync between the two, and no extra Claude
+    call is needed to produce this message either way.
+    """
+    bad_fields = re.findall(r"Field '(origin|destination)' is invalid", raw_message)
+    if not bad_fields:
+        return raw_message  # some other Duffel error - surface it as-is
+
+    field_values = {"origin": origin, "destination": destination}
+    field_labels = {"origin": "departure city", "destination": "destination city"}
+
+    parts = []
+    for field in bad_fields:
+        value = field_values[field]
+        label = field_labels[field]
+        hint = COUNTRY_CITY_HINTS.get((value or "").strip().lower())
+        if hint:
+            parts.append(f"'{value}' looks like a country, not a specific {label} - try a city like {hint}.")
+        else:
+            parts.append(
+                f"'{value}' isn't a valid {label}. Please use a specific city or its 3-letter "
+                f"airport code (e.g. KHI for Karachi, IST for Istanbul)."
+            )
+    return " ".join(parts)
+
+
 # --- Duffel Webhook Setup ---
 # Signing secret shown by Duffel when you register the webhook endpoint in
 # their dashboard. Used to verify incoming webhook requests are genuinely
@@ -164,10 +228,15 @@ Your job:
 1. Extract the route (origin/destination city), travel date, and passenger count.
 2. Convert city names to their 3-letter IATA airport codes yourself
    (e.g. Lahore=LHR, Islamabad=ISB, Karachi=KHI, Istanbul=IST, Dubai=DXB).
-3. If the date or passenger count is missing, do NOT call the search_flights tool yet -
+3. If the customer names a COUNTRY instead of a specific city (e.g. "I want to
+   go to the US" or "US" as the destination), do NOT guess a city and do NOT
+   call the search_flights tool - ask which city in that country they mean,
+   optionally suggesting a couple of well-known ones (e.g. "Which city in the
+   US - New York, Los Angeles, Miami?").
+4. If the date or passenger count is missing, do NOT call the search_flights tool yet -
    ask the customer a short, friendly follow-up question in English first.
-4. Once you have origin, destination, and date, call the search_flights tool.
-5. Always reply in English. Keep responses short and direct - no long explanations.
+5. Once you have a specific origin city, destination city, and date, call the search_flights tool.
+6. Always reply in English. Keep responses short and direct - no long explanations.
 """
 
 SEARCH_TOOL = {
@@ -442,7 +511,7 @@ def search_flights(origin: str, destination: str, departure_date: str, passenger
         timeout=30,
     )
     if resp.status_code >= 400:
-        raise Exception(duffel_error_message(resp))
+        raise Exception(friendly_flight_input_error(duffel_error_message(resp), origin, destination))
 
     offer_request = resp.json()["data"]
     offers = offer_request.get("offers", [])
